@@ -1,14 +1,11 @@
 services:
   - type: web
     name: legal-rag-api
-    env: python
+    env: docker
     plan: free
     region: oregon
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
       - key: LLM_PROVIDER
         value: auto
       - key: EMBEDDING_MODEL
@@ -23,7 +20,7 @@ services:
         value: ./data/processed
       - key: DATA_UPLOADS_PATH
         value: ./data/uploads
-      # Set these secret keys in Render dashboard → Environment
+      # Set these in Render dashboard → Environment (secret)
       - key: GROQ_API_KEY
         sync: false
       - key: GOOGLE_API_KEY
