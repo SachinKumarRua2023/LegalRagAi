@@ -44,8 +44,8 @@ CHUNK_OVERLAP = 200
 MAX_CHUNKS_PER_DOC = 500
 
 # ── Retrieval ────────────────────────────────────────────────
-TOP_K_RESULTS = 5
-SIMILARITY_THRESHOLD = 0.3
+TOP_K_RESULTS = 8  # Retrieve more chunks for better context
+SIMILARITY_THRESHOLD = 0.15  # Lower threshold to capture more content
 
 # ── Download ─────────────────────────────────────────────────
 MAX_DOWNLOAD_SIZE_GB = float(os.getenv("MAX_DOWNLOAD_SIZE_GB", "3"))

@@ -7,7 +7,7 @@ services:
     dockerfilePath: ./Dockerfile
     envVars:
       - key: LLM_PROVIDER
-        value: auto
+        value: groq  # Force Groq (fastest, recommended)
       - key: EMBEDDING_MODEL
         value: local
       - key: CHROMA_DB_PATH

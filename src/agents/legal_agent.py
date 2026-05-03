@@ -92,6 +92,7 @@ class LegalAgent:
         console.print(Markdown(result["answer"]))
 
         if result.get("sources"):
+            # Sources table with file info
             table = Table(title="Sources", show_header=True, header_style="bold magenta")
             table.add_column("#", style="dim", width=3)
             table.add_column("File", style="cyan")
@@ -110,6 +111,13 @@ class LegalAgent:
                     str(src.get("relevance_score", "—")),
                 )
             console.print(table)
+
+            # Show content preview for each source
+            console.print("\n[bold magenta]Retrieved Content:[/bold magenta]")
+            for i, src in enumerate(result["sources"], 1):
+                preview = src.get("content_preview", "No preview available")
+                console.print(f"\n[dim][{i}] {src.get('source_file')}:[/dim]")
+                console.print(f"[italic]{preview}[/italic]")
 
     def _render_status(self):
         status = get_index_status()

@@ -28,8 +28,8 @@ Your Files (PDF/DOCX/PPTX/XLSX/CSV/TXT)
 |-----------|------|------|
 | Vector DB | ChromaDB (local) | Free |
 | Embeddings | sentence-transformers all-MiniLM-L6-v2 | Free |
-| LLM | Google Gemini 1.5 Flash | Free (15 RPM, 1M tokens/day) |
-| Data | CourtListener API + HuggingFace | Free |
+| LLM | **Groq Llama 3.3 70B** | Free (30 RPM, 14,400 req/day) |
+| Data | Oyez.org + HuggingFace | Free |
 
 ## Quick Start
 
@@ -38,23 +38,33 @@ Your Files (PDF/DOCX/PPTX/XLSX/CSV/TXT)
 pip install -r requirements.txt
 ```
 
-### 2. Set up API keys
+### 2. Set up API keys (Groq recommended — fastest)
 ```bash
 copy .env.example .env
-# Edit .env and add your GOOGLE_API_KEY
-# Get free key at: https://aistudio.google.com/app/apikey
+# Edit .env and add your GROQ_API_KEY
+# Get free key at: https://console.groq.com/keys
 ```
 
-### 3. Download legal data (1-3 GB)
+### 3. Run the agent — Auto-installs 1-3GB data on first run!
 ```bash
-# Download US Supreme Court cases (~100MB, fast)
-python ingest.py --download huggingface --dataset us_scotus --limit 3000
+# On first run: automatically downloads 1-3GB of US legal cases
+# (SCOTUS from Oyez.org + CaseHOLD from HuggingFace)
+# and indexes them for semantic search. This only happens once.
 
-# Download from CourtListener API (free, no key needed for basic)
-python ingest.py --download courtlistener --query "criminal law" --limit 500
+python main.py
 
-# Download everything (1-2 GB)
-python ingest.py --download all --limit 2000
+# Or start the API server (also auto-installs on first start)
+python backend/api.py
+```
+
+### Manual data management (optional)
+```bash
+# Re-download sample data manually
+python ingest.py --download auto --limit 500
+
+# Index your own files
+python ingest.py --file ./my_case.pdf
+python ingest.py --path ./my_legal_documents/
 ```
 
 ### 4. Index your own files

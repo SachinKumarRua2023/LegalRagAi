@@ -49,19 +49,24 @@ def query(
     generator = get_generator()
     answer = generator.generate(question, context)
 
-    # 4. Build source list (deduplicated)
+    # 4. Build source list (deduplicated) with content preview
     seen_paths: set[str] = set()
     unique_sources = []
     for r in results:
         path = r.get("source_path") or r.get("source_file", "")
         if path not in seen_paths:
             seen_paths.add(path)
+            # Get content preview (first 300 chars of the chunk)
+            text_preview = r.get("text", "")[:300].replace("\n", " ").strip()
+            if len(r.get("text", "")) > 300:
+                text_preview += "..."
             unique_sources.append({
                 "source_file": r["source_file"],
                 "source_path": r["source_path"],
                 "source_folder": r["source_folder"],
                 "source_citation": r["source_citation"],
                 "relevance_score": r["relevance_score"],
+                "content_preview": text_preview,
             })
 
     return {
