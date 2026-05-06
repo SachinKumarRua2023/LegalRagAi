@@ -11,15 +11,13 @@ services:
         value: groq  # Force Groq (fastest, recommended)
       - key: EMBEDDING_MODEL
         value: local
-      # Vector DB: Use Pinecone for serverless (ChromaDB doesn't persist on Render free tier)
+      # Vector DB: Using ChromaDB (data will be lost on Render free tier restart)
       - key: VECTOR_DB_PROVIDER
-        value: pinecone  # Change to "chromadb" only if using paid persistent disk
-      - key: PINECONE_INDEX_NAME
-        value: legal-rag
-      - key: PINECONE_CLOUD
-        value: aws
-      - key: PINECONE_REGION
-        value: us-east-1
+        value: chromadb
+      - key: CHROMA_DB_PATH
+        value: ./chroma_db
+      - key: CHROMA_COLLECTION_NAME
+        value: legal_cases
       - key: DATA_RAW_PATH
         value: ./data/raw
       - key: DATA_PROCESSED_PATH
@@ -29,8 +27,6 @@ services:
       # Set these in Render dashboard → Environment (secret)
       - key: GROQ_API_KEY
         sync: false
-      - key: PINECONE_API_KEY
-        sync: false  # REQUIRED for Pinecone vector DB
       - key: GOOGLE_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
