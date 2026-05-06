@@ -4,7 +4,7 @@ from typing import Any
 
 from src.rag.pipeline import query, query_file, query_folder
 from src.vector_db.indexer import index_file, index_directory, get_index_status
-from src.vector_db.chroma_client import list_indexed_files
+from src.vector_db.vector_client import list_indexed_files
 from src.utils.file_utils import scan_upload_folder, list_files_recursive, get_file_info
 from config.settings import DATA_RAW_PATH, DATA_UPLOADS_PATH
 

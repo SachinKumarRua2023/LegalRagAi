@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.rag.pipeline import query as rag_query
 from src.vector_db.indexer import index_file, index_directory, get_index_status
-from src.vector_db.chroma_client import list_indexed_files
+from src.vector_db.vector_client import list_indexed_files
 from config.settings import DATA_UPLOADS_PATH, SUPPORTED_EXTENSIONS
 
 app = FastAPI(

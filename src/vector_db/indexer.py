@@ -8,7 +8,7 @@ from rich.progress import track
 
 from src.data_ingestion.parsers.document_router import parse_document, get_supported_extensions
 from src.data_ingestion.chunkers.text_chunker import chunk_document
-from src.vector_db.chroma_client import add_chunks, collection_stats, list_indexed_files
+from src.vector_db.vector_client import add_chunks, collection_stats, list_indexed_files
 from config.settings import DATA_RAW_PATH, DATA_UPLOADS_PATH, SUPPORTED_EXTENSIONS
 
 console = Console()

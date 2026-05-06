@@ -10,6 +10,7 @@ python-multipart==0.0.20
 
 # ── Vector DB ──────────────────────────────────────────────
 chromadb==0.5.20
+pinecone[grpc]==5.4.2  # Cloud vector DB for serverless deployment
 
 # ── Embeddings ─────────────────────────────────────────────
 sentence-transformers==3.3.1

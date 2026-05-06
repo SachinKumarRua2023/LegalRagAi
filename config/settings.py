@@ -27,8 +27,18 @@ LOCAL_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 GOOGLE_EMBEDDING_MODEL = "models/text-embedding-004"
 
 # ── Vector DB ────────────────────────────────────────────────
+# Options: "chromadb" (local) | "pinecone" (cloud - for serverless deployment)
+VECTOR_DB_PROVIDER = os.getenv("VECTOR_DB_PROVIDER", "chromadb")
+
+# ChromaDB (local - default)
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", str(BASE_DIR / "chroma_db"))
 CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "legal_cases")
+
+# Pinecone (cloud - for Vercel/Render deployment)
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "legal-rag")
+PINECONE_CLOUD = os.getenv("PINECONE_CLOUD", "aws")  # aws or gcp
+PINECONE_REGION = os.getenv("PINECONE_REGION", "us-east-1")
 
 # ── Data Paths ───────────────────────────────────────────────
 DATA_RAW_PATH = Path(os.getenv("DATA_RAW_PATH", str(BASE_DIR / "data" / "raw")))

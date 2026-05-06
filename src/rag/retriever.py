@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.vector_db.chroma_client import query_collection, list_indexed_files
+from src.vector_db.vector_client import query_collection, list_indexed_files
 from config.settings import TOP_K_RESULTS, SIMILARITY_THRESHOLD
 
 
