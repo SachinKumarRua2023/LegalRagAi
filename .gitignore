@@ -11,6 +11,7 @@ chroma_db/
 # ── Downloaded data (large, rebuild with ingest.py) ───────
 data/raw/
 data/processed/
+data/lawsuit_*/
 
 # ── Python ────────────────────────────────────────────────
 __pycache__/

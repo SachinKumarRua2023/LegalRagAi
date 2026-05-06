@@ -14,4 +14,5 @@ COPY . .
 RUN mkdir -p chroma_db data/raw data/processed data/uploads
 
 ENV PORT=8000
-CMD uvicorn backend.api:app --host 0.0.0.0 --port ${PORT}
+EXPOSE ${PORT}
+CMD ["sh", "-c", "uvicorn backend.api:app --host 0.0.0.0 --port ${PORT}"]
