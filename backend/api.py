@@ -362,8 +362,10 @@ async def legal_draft_endpoint(req: LegalDraftRequest, background_tasks: Backgro
             channel="email_legal",
         )
 
+        drafted = professional_reply
         return {
-            "professional_reply": professional_reply,
+            "professional_reply": drafted["body"],
+            "email_subject": drafted["subject"],
             "rag_answer": rag_result["answer"],
             "web_sources_found": len(web_results),
             "chunks_retrieved": rag_result["chunks_retrieved"],
@@ -382,9 +384,8 @@ async def legal_draft_form(
     attachment_text: str = Form(""),
 ):
     """
-    Form-data version for Make.com — avoids JSON escaping issues.
-    Use Body type: application/x-www-form-urlencoded in Make HTTP module.
-    Pass attachment_text as extracted text from email attachment.
+    Form-data version for Make.com.
+    Returns: professional_reply (HTML body) + email_subject (professional subject line).
     """
     if secret != AUTOMATION_SECRET:
         raise HTTPException(status_code=403, detail="Invalid automation secret.")
@@ -395,7 +396,7 @@ async def legal_draft_form(
         web_results = search_legal_evidence(question, max_results=5)
 
         from src.integrations.legal_drafter import draft_legal_email
-        professional_reply = draft_legal_email(
+        drafted = draft_legal_email(
             question=question,
             rag_answer=rag_result["answer"],
             rag_sources=rag_result["sources"],
@@ -408,19 +409,66 @@ async def legal_draft_form(
             log_to_odoo,
             username=from_email,
             question=question,
-            answer=professional_reply,
+            answer=drafted["body"],
             sources=rag_result["sources"],
             chunks_retrieved=rag_result["chunks_retrieved"],
             channel="email_legal",
         )
 
         return {
-            "professional_reply": professional_reply,
+            "professional_reply": drafted["body"],
+            "email_subject": drafted["subject"],
             "web_sources_found": len(web_results),
             "chunks_retrieved": rag_result["chunks_retrieved"],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Automation file upload → auto-index to Pinecone ──────────────────────────
+
+@app.post("/api/automate/upload")
+async def automation_upload(
+    file: UploadFile = File(...),
+    secret: str = Form(""),
+):
+    """
+    Secret-protected file upload for Make.com automation.
+    Accepts email attachment → parses text → indexes to Pinecone → returns extracted text.
+    Make.com: use multipart/form-data, pass file + secret fields.
+    """
+    if secret != AUTOMATION_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid automation secret.")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {ext}. Supported: {sorted(SUPPORTED_EXTENSIONS)}",
+        )
+
+    # Save to temp file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        tmp_path = Path(tmp.name)
+
+    try:
+        # Index to Pinecone (parse + chunk + embed + store)
+        result = index_file(tmp_path, extra_metadata={"source": "email_attachment", "filename": file.filename})
+
+        # Extract text for immediate use in the reply
+        from src.data_ingestion.parsers.document_router import parse_document
+        extracted_text = parse_document(tmp_path)
+        preview = extracted_text[:3000] if extracted_text else ""
+
+        return {
+            "status": "indexed",
+            "filename": file.filename,
+            "extracted_text": preview,
+            "chunks_indexed": result.get("chunks_added", 0),
+        }
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 class SupportTicketRequest(BaseModel):

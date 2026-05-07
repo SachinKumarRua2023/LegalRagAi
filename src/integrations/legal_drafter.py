@@ -1,7 +1,7 @@
 """
 Claude-powered professional legal email drafter.
 Combines RAG case knowledge + Tavily internet research + attachment content
-into a formal, citation-rich legal letter.
+into a formal, citation-rich legal letter rendered as clean HTML.
 """
 from __future__ import annotations
 from datetime import date
@@ -9,40 +9,57 @@ from config.settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 LEGAL_DRAFTER_SYSTEM = """You are a senior US legal counsel with 20+ years of experience in civil litigation, contract law, and insurance disputes.
 
-Your task is to draft a comprehensive, professional legal response email based on the provided context.
+Your task: Draft a professional legal response email AND generate a professional email subject line.
+
+OUTPUT FORMAT — Return ONLY valid JSON with exactly two keys:
+{
+  "subject": "Professional Email Subject Line Here",
+  "body": "Full HTML email body here"
+}
+
+SUBJECT LINE RULES:
+- Professional and specific (e.g., "Legal Response: Mechanic's Lien Dispute — ARS v. Pramukh Inc.")
+- Under 80 characters
+- No markdown, no quotes inside the subject
+
+BODY HTML RULES — Use this exact HTML structure:
+<div style="font-family: Georgia, serif; max-width: 700px; color: #1a1a1a; line-height: 1.8;">
+
+  <p style="color: #555; margin-bottom: 20px;">[Date]</p>
+
+  <p style="margin-bottom: 6px;"><strong>Re:</strong> [Matter/Subject]</p>
+
+  <p style="margin-bottom: 24px;">Dear [Recipient Name],</p>
+
+  <p style="margin-bottom: 16px;">[Opening paragraph — state purpose clearly]</p>
+
+  <h3 style="color: #0a1628; border-bottom: 1px solid #c9a84c; padding-bottom: 6px; margin-top: 28px;">I. FACTUAL BACKGROUND</h3>
+  <p style="margin-bottom: 16px;">[Facts from case documents]</p>
+
+  <h3 style="color: #0a1628; border-bottom: 1px solid #c9a84c; padding-bottom: 6px; margin-top: 28px;">II. LEGAL ARGUMENT</h3>
+  <p style="margin-bottom: 16px;">[Legal arguments with proper citations]</p>
+
+  <h3 style="color: #0a1628; border-bottom: 1px solid #c9a84c; padding-bottom: 6px; margin-top: 28px;">III. CONCLUSION</h3>
+  <p style="margin-bottom: 24px;">[Conclusion and demand/request]</p>
+
+  <p style="margin-bottom: 4px;">Respectfully submitted,</p>
+  <p style="margin-bottom: 4px;"><strong>Legal AI Research Assistant</strong></p>
+  <p style="margin-bottom: 24px; color: #555;">On behalf of the Client</p>
+
+  <hr style="border: none; border-top: 1px solid #ddd; margin: 24px 0;">
+  <h4 style="color: #0a1628;">LEGAL AUTHORITIES CITED</h4>
+  <ul style="padding-left: 20px; color: #333;">
+    <li style="margin-bottom: 8px;">[Case citation 1]</li>
+    <li style="margin-bottom: 8px;">[Case citation 2]</li>
+  </ul>
+
+</div>
 
 STRICT RULES:
-1. Format as a formal legal letter — proper date, salutation, structured body, professional closing.
-2. Cite every legal case or statute using proper US legal citation format (e.g., Brown v. Board of Education, 347 U.S. 483 (1954)).
-3. Build the STRONGEST possible legal argument in favor of the client using ALL provided evidence.
-4. Reference specific case documents where they support the argument.
-5. NEVER fabricate cases, facts, or citations — only use what is explicitly provided.
-6. End with a "Legal Authorities Cited" section listing all cases and statutes referenced.
-7. Use precise legal language — this is going directly to opposing counsel or the court.
-8. Maximum 600 words in the body. Be comprehensive but focused.
-
-LETTER STRUCTURE:
-[Date]
-
-Re: [Subject/Matter]
-
-Dear [Recipient],
-
-[Opening — state the purpose clearly]
-
-[Section 1 — Facts established from case documents]
-
-[Section 2 — Legal argument supported by case law and statutes]
-
-[Section 3 — Conclusion and demand/request]
-
-Respectfully,
-[Legal AI Research Assistant]
-On behalf of the Client
-
----
-LEGAL AUTHORITIES CITED:
-[List all cases and statutes referenced]
+1. Build the STRONGEST possible legal argument for the client using ALL provided evidence.
+2. Cite every legal case with proper US format: Case Name, Volume Reporter Page (Court Year).
+3. NEVER fabricate cases or facts — only use what is provided in context.
+4. Return ONLY the JSON — no explanation, no markdown fences, no extra text.
 """
 
 
@@ -53,22 +70,27 @@ def draft_legal_email(
     web_results: list[dict],
     attachment_text: str = "",
     from_name: str = "Client",
-) -> str:
+) -> dict:
     """
     Draft a professional legal response using Claude.
-    Falls back to formatted RAG answer if Claude unavailable.
+    Returns dict with 'subject' and 'body' (HTML).
+    Falls back to plain text RAG answer if Claude unavailable.
     """
     if not ANTHROPIC_API_KEY:
         print("[LegalDrafter] ANTHROPIC_API_KEY not set — returning RAG answer.")
-        return rag_answer
+        return {
+            "subject": f"Legal Response: {question[:60]}",
+            "body": f"<p>{rag_answer}</p>",
+        }
 
     try:
         import anthropic
+        import json as _json
+
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
         # ── Build context sections ──────────────────────────────────────────
 
-        # Case document findings
         sources_block = "\n".join(
             f"  [{i+1}] {s.get('source_file', 'Unknown')} "
             f"(relevance: {s.get('relevance_score', 0):.2f})\n"
@@ -76,18 +98,13 @@ def draft_legal_email(
             for i, s in enumerate(rag_sources[:6])
         )
 
-        # Internet legal research
-        if web_results:
-            web_block = "\n".join(
-                f"  [{r['type'].upper()}] {r['title']}\n"
-                f"  URL: {r['url']}\n"
-                f"  Excerpt: {r['content'][:400]}"
-                for r in web_results[:8]
-            )
-        else:
-            web_block = "  No additional internet research available."
+        web_block = "\n".join(
+            f"  [{r['type'].upper()}] {r['title']}\n"
+            f"  URL: {r['url']}\n"
+            f"  Excerpt: {r['content'][:400]}"
+            for r in web_results[:8]
+        ) if web_results else "  No additional internet research available."
 
-        # Attachment content
         attachment_block = (
             f"\nCONTENT FROM EMAIL ATTACHMENT:\n{attachment_text[:2000]}\n"
             if attachment_text.strip() else ""
@@ -116,24 +133,38 @@ SECTION C — INTERNET LEGAL RESEARCH (cases, statutes, precedents):
 {web_block}
 
 ════════════════════════════════════════════════════════
-TASK: Draft a formal professional legal response letter to the above inquiry.
-Build the strongest possible argument for our client using ALL evidence above.
-Cite specific cases from Section C using proper US legal citation format.
-Reference specific documents from Section B where they support the argument.
+TASK: Draft a formal professional legal response letter.
+Build the strongest argument for our client using ALL evidence.
+Return ONLY the JSON with "subject" and "body" keys as instructed.
 ════════════════════════════════════════════════════════
 """
 
         msg = client.messages.create(
             model=CLAUDE_MODEL,
-            max_tokens=2500,
+            max_tokens=3000,
             system=LEGAL_DRAFTER_SYSTEM,
             messages=[{"role": "user", "content": user_prompt}],
         )
 
-        drafted = msg.content[0].text
-        print(f"[LegalDrafter] Claude drafted {len(drafted)} char legal letter.")
-        return drafted
+        raw = msg.content[0].text.strip()
+
+        # Strip markdown fences if Claude added them
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        raw = raw.strip()
+
+        result = _json.loads(raw)
+        subject = result.get("subject", f"Legal Response: {question[:60]}")
+        body = result.get("body", f"<p>{rag_answer}</p>")
+
+        print(f"[LegalDrafter] Drafted: subject='{subject[:60]}' body={len(body)} chars")
+        return {"subject": subject, "body": body}
 
     except Exception as e:
         print(f"[LegalDrafter] Claude drafting failed (non-fatal): {e}")
-        return rag_answer
+        return {
+            "subject": f"Legal Response: {question[:60]}",
+            "body": f"<p>{rag_answer}</p>",
+        }
