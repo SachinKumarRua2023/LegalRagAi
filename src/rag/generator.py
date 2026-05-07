@@ -67,23 +67,28 @@ class GroqGenerator:
 
 class GeminiGenerator:
     def __init__(self):
-        import google.generativeai as genai
+        from google import genai
         if not GOOGLE_API_KEY:
             raise ValueError("GOOGLE_API_KEY not set.")
-        genai.configure(api_key=GOOGLE_API_KEY)
-        self._model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=SYSTEM_PROMPT,
-        )
+        self._client = genai.Client(api_key=GOOGLE_API_KEY)
+        self._model = GEMINI_MODEL
         print(f"[LLM] Gemini ready: {GEMINI_MODEL}")
 
     def generate(self, query: str, context: str) -> str:
+        from google import genai as _genai
         prompt = (
             f"Context Documents:\n{context}\n\n"
             f"User Question: {query}\n\n"
             f"Answer (always cite [Source N] tags from above):"
         )
-        response = self._model.generate_content(prompt)
+        response = self._client.models.generate_content(
+            model=self._model,
+            contents=prompt,
+            config=_genai.types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=0.1,
+            ),
+        )
         return response.text
 
 

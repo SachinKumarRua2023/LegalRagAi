@@ -24,7 +24,7 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 # ── Embeddings ───────────────────────────────────────────────
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "local")
 LOCAL_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-GOOGLE_EMBEDDING_MODEL = "models/text-embedding-004"
+GOOGLE_EMBEDDING_MODEL = "gemini-embedding-001"
 
 # ── Vector DB ────────────────────────────────────────────────
 # Options: "chromadb" (local) | "pinecone" (cloud - for serverless deployment)
