@@ -158,6 +158,7 @@ def _try(cls, name: str):
 def get_generator():
     """Returns the best available LLM generator (cached singleton)."""
     provider = LLM_PROVIDER.lower()
+    print(f"[LLM] Provider={provider!r} | GROQ_API_KEY set={bool(GROQ_API_KEY)} | GOOGLE_API_KEY set={bool(GOOGLE_API_KEY)}")
 
     if provider == "groq":
         g = _try(GroqGenerator, "Groq")
