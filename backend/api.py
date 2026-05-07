@@ -314,6 +314,115 @@ class AutomationQueryRequest(BaseModel):
     secret: str = ""  # simple shared secret to prevent abuse
 
 
+class LegalDraftRequest(BaseModel):
+    question: str
+    from_email: str = "automation@system"
+    from_name: str = "Client"
+    secret: str = ""
+    attachment_text: str = ""  # extracted text from email attachment (optional)
+
+
+@app.post("/api/automate/query/legal")
+async def legal_draft_endpoint(req: LegalDraftRequest, background_tasks: BackgroundTasks):
+    """
+    Full legal AI pipeline:
+    1. RAG query → Pinecone case documents
+    2. Tavily internet search → relevant legal cases, statutes, precedents
+    3. Claude drafts a professional formal legal letter using all context
+    Returns a citation-rich, court-ready legal email reply.
+    """
+    if req.secret != AUTOMATION_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid automation secret.")
+    try:
+        # Step 1: RAG against Pinecone
+        rag_result = rag_query(question=req.question, n_results=8)
+
+        # Step 2: Internet legal research via Tavily
+        from src.integrations.web_search import search_legal_evidence
+        web_results = search_legal_evidence(req.question, max_results=5)
+
+        # Step 3: Claude drafts professional legal letter
+        from src.integrations.legal_drafter import draft_legal_email
+        professional_reply = draft_legal_email(
+            question=req.question,
+            rag_answer=rag_result["answer"],
+            rag_sources=rag_result["sources"],
+            web_results=web_results,
+            attachment_text=req.attachment_text,
+            from_name=req.from_name,
+        )
+
+        background_tasks.add_task(
+            log_to_odoo,
+            username=req.from_email,
+            question=req.question,
+            answer=professional_reply,
+            sources=rag_result["sources"],
+            chunks_retrieved=rag_result["chunks_retrieved"],
+            channel="email_legal",
+        )
+
+        return {
+            "professional_reply": professional_reply,
+            "rag_answer": rag_result["answer"],
+            "web_sources_found": len(web_results),
+            "chunks_retrieved": rag_result["chunks_retrieved"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/automate/query/legal/form")
+async def legal_draft_form(
+    background_tasks: BackgroundTasks,
+    question: str = Form(...),
+    from_email: str = Form("automation@system"),
+    from_name: str = Form("Client"),
+    secret: str = Form(""),
+    attachment_text: str = Form(""),
+):
+    """
+    Form-data version for Make.com — avoids JSON escaping issues.
+    Use Body type: application/x-www-form-urlencoded in Make HTTP module.
+    Pass attachment_text as extracted text from email attachment.
+    """
+    if secret != AUTOMATION_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid automation secret.")
+    try:
+        rag_result = rag_query(question=question, n_results=8)
+
+        from src.integrations.web_search import search_legal_evidence
+        web_results = search_legal_evidence(question, max_results=5)
+
+        from src.integrations.legal_drafter import draft_legal_email
+        professional_reply = draft_legal_email(
+            question=question,
+            rag_answer=rag_result["answer"],
+            rag_sources=rag_result["sources"],
+            web_results=web_results,
+            attachment_text=attachment_text,
+            from_name=from_name,
+        )
+
+        background_tasks.add_task(
+            log_to_odoo,
+            username=from_email,
+            question=question,
+            answer=professional_reply,
+            sources=rag_result["sources"],
+            chunks_retrieved=rag_result["chunks_retrieved"],
+            channel="email_legal",
+        )
+
+        return {
+            "professional_reply": professional_reply,
+            "web_sources_found": len(web_results),
+            "chunks_retrieved": rag_result["chunks_retrieved"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class SupportTicketRequest(BaseModel):
     name: str
     email: str

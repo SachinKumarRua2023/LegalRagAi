@@ -73,6 +73,9 @@ VAPI_ASSISTANT_ID = os.getenv("VAPI_ASSISTANT_ID", "")
 VAPI_PHONE_NUMBER_ID = os.getenv("VAPI_PHONE_NUMBER_ID", "")
 HUMAN_TRANSFER_NUMBER = os.getenv("HUMAN_TRANSFER_NUMBER", "")
 
+# ── Legal Research ───────────────────────────────────────────
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
 # ── Support Contact ───────────────────────────────────────────
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "seekhowithrua@gmail.com")
 
