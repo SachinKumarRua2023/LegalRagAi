@@ -47,19 +47,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Preload embedding model in background so first query has no cold-start penalty."""
-    import threading
-    def _preload():
-        import time
-        time.sleep(10)  # let uvicorn fully bind before loading torch
-        try:
-            from src.vector_db.embeddings import get_embedding_engine
-            get_embedding_engine()
-            print("[Startup] Embedding model preloaded.")
-        except Exception as e:
-            print(f"[Startup] Embedding preload failed: {e}")
-    threading.Thread(target=_preload, daemon=True).start()
-    print("[Startup] LegalRagAI ready. Vector DB: Pinecone (pre-loaded).")
+    print("[Startup] LegalRagAI ready. Embeddings: Google | Vector DB: Pinecone | LLM: Groq")
 
 
 # ── Request / Response models ─────────────────────────────────────────────────

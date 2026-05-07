@@ -25,29 +25,27 @@ def get_pinecone_client() -> Pinecone:
     return Pinecone(api_key=PINECONE_API_KEY)
 
 
-def ensure_index_exists(dimension: int = 384) -> str:
-    """Create index if it doesn't exist. Returns index name."""
+def _embedding_dimension() -> int:
+    """Return the dimension of the active embedding engine."""
+    return get_embedding_engine().dimension
+
+
+def ensure_index_exists() -> str:
+    """Create Pinecone index if it doesn't exist, using the active embedding dimension."""
     pc = get_pinecone_client()
-    
-    # Check if index exists
+    dimension = _embedding_dimension()
     existing = [idx.name for idx in pc.list_indexes()]
-    
     if PINECONE_INDEX_NAME not in existing:
         print(f"[Pinecone] Creating index: {PINECONE_INDEX_NAME} ({dimension}d)")
         pc.create_index(
             name=PINECONE_INDEX_NAME,
             dimension=dimension,
             metric="cosine",
-            spec=ServerlessSpec(
-                cloud=PINECONE_CLOUD,
-                region=PINECONE_REGION,
-            ),
+            spec=ServerlessSpec(cloud=PINECONE_CLOUD, region=PINECONE_REGION),
         )
-        # Wait for index to be ready
         while PINECONE_INDEX_NAME not in [idx.name for idx in pc.list_indexes()]:
             time.sleep(1)
         print(f"[Pinecone] Index ready: {PINECONE_INDEX_NAME}")
-    
     return PINECONE_INDEX_NAME
 
 
@@ -193,9 +191,10 @@ def list_indexed_files() -> list[dict]:
         return _files_cache[1]
     try:
         index = get_index()
+        dim = _embedding_dimension()
         results = index.query(
-            vector=[0.0] * 384,
-            top_k=1000,  # well above our ~834 vectors; avoids loading 10k objects
+            vector=[0.0] * dim,
+            top_k=1000,
             include_metadata=True,
         )
         seen: dict[str, dict] = {}
