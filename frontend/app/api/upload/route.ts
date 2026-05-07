@@ -9,6 +9,10 @@ export async function POST(req: NextRequest) {
       method: "POST",
       body: form,
     });
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      return NextResponse.json({ error: "Backend warming up, please retry in 30 seconds." }, { status: 503 });
+    }
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch (e: unknown) {

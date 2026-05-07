@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Legal AI Research — CompleteRagAI",
-  description: "AI-powered US legal case research with RAG + ChromaDB",
+  title: "Legal AI Research",
+  description: "AI-powered US legal case research with RAG + Pinecone + Groq",
+  icons: { icon: "/icon.svg" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
