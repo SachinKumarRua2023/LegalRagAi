@@ -334,206 +334,273 @@ Render Free Tier (legalragai.onrender.com)
 
 ---
 
-## 9. What Was Built & Fixed (Session History — 2026-05-07)
+## 9. Full Journey — Every Hurdle We Hit and How We Solved It
 
-### Session 1 — Initial Build & Deployment Fixes
-- Indexed 834 unique vectors into Pinecone (384-dim `legal-rag` index)
-- Fixed Windows encoding bug in `indexer.py` (replaced ✓/✗ with OK/ERR for cp1252 compatibility)
-- Added `GROQ_MODEL` to `.env` and `render.yaml`
-- **Root cause 1:** `vector_client.py` eager imports crashed Render startup → fixed to lazy imports
-- **Root cause 2:** Startup event blocked async event loop with Pinecone query → replaced with print
-- Fixed `next.config.ts` → `next.config.mjs` (Vercel doesn't support .ts config)
-- Removed `@backend-url` secret reference from `vercel.json`
-- All 4 frontend API routes handle HTML cold-start responses without crashing
-- Added backend status indicator + warming-up banner in header
-- Added scales-of-justice SVG favicon (`app/icon.svg`)
+> This section is the honest post-mortem. Every obstacle encountered, why it happened, and exactly what fixed it.
 
-### Session 2 — OOM Fix, Google Embeddings, Re-index (2026-05-07)
-
-**Problem:** Render 512MB OOM — torch + sentence-transformers used ~300MB, triggered OOM kill.
-
-**Solution:** Switched entirely to Google `gemini-embedding-001` (no torch, ~130MB usage).
-
-**Changes:**
-- `requirements.txt`: Removed `torch`, `sentence-transformers`. Added `google-genai>=1.0.0`.
-- `src/vector_db/embeddings.py`: Rewrote `GoogleEmbeddingEngine` using new `google.genai` SDK.
-  - Uses `gemini-embedding-001` with `output_dimensionality=768`
-  - Batches 20 texts/call, 13s sleep between batches (stays under 100 texts/min free tier)
-  - Retry with backoff on 429 errors (extracts `retryDelay` from error message)
-- `src/vector_db/pinecone_client.py`:
-  - `_embedding_dimension()` now reads from active engine (dynamic, not hardcoded 384)
-  - `list_indexed_files()` caches results 5 min to prevent repeated 10k-vector scans (OOM fix)
-  - Reduced `top_k` from 10000 to 1000 for file listing
-- `src/rag/generator.py`: Updated `GeminiGenerator` to use new `google.genai` SDK
-- `config/settings.py`: `GOOGLE_EMBEDDING_MODEL = "gemini-embedding-001"`
-- `.env`: `EMBEDDING_MODEL=google`, `PINECONE_INDEX_NAME=legal-rag-768`
-- `render.yaml`: `EMBEDDING_MODEL: google`, `PINECONE_INDEX_NAME: legal-rag-768`
-
-**New Pinecone index:** `legal-rag-768` (768-dim, cosine, aws us-east-1) — re-indexed 676 vectors.
-
-**Frontend bug fixes:**
-- `files/route.ts` + `status/route.ts`: Added `{ status: res.status }` to `NextResponse.json()` — missing this caused backend 500 errors to appear as 200, crashing the app with `TypeError: .filter is not a function`
-- `lib/api.ts`: `apiFetch` now handles FastAPI `{"detail":"..."}` error format + `Array.isArray` guard on `listFiles()`
-- `ChatWindow.tsx`: Auto-retry with 20s countdown on backend warmup errors (up to 3 retries)
-- `Message.tsx`: Shows `msg.content` as loading text during retry countdown
+### Hurdle 1 — App crashed on startup (eager imports)
+**What happened:** Deployed to Render. Server started, then immediately died before binding the port.
+**Root cause:** `vector_client.py` imported both `chromadb` and `pinecone` at module load time. `import chromadb` triggers heavy SQLite initialization that blocked uvicorn's port binding.
+**Fix:** Moved all vector DB imports inside `_get_client()` — lazy loading, only runs on first actual request.
+**Lesson:** On Render free tier, startup must be ultra-lightweight. No heavy imports at module level.
 
 ---
 
-## 9. Known Issues & Limitations
+### Hurdle 2 — Startup event blocked the async event loop
+**What happened:** Server started but never became ready. Health checks timed out.
+**Root cause:** The `@app.on_event("startup")` function called `get_index_status()` → `list_indexed_files()` → Pinecone query. A synchronous network call inside an async startup handler blocks the entire event loop.
+**Fix:** Replaced startup body with a single print statement. Index status is fetched lazily on first `/api/status` request.
+**Lesson:** FastAPI startup events must be near-instant. Never make network calls there.
 
-| Issue | Severity | Root Cause |
+---
+
+### Hurdle 3 — Out of Memory (OOM) kill on Render
+**What happened:** Render sent an OOM kill email. App died mid-query. Memory usage: ~480MB / 512MB limit.
+**Root cause:** `sentence-transformers` + `torch` = ~300MB RAM just to load the embedding model. Each `/api/files` call ran a `top_k=10000` Pinecone scan and built 834 Python dicts → another ~150MB spike.
+**Fix 1:** Removed torch + sentence-transformers entirely. Switched to Google `gemini-embedding-001` API (~130MB total RAM usage — a 350MB saving).
+**Fix 2:** Added 5-minute in-memory cache on `list_indexed_files()`. Reduced Pinecone scan `top_k` from 10000 to 1000.
+**Lesson:** On a 512MB server, every MB counts. API-based embeddings always beat local models for constrained environments.
+
+---
+
+### Hurdle 4 — App crash: TypeError `.filter is not a function`
+**What happened:** Frontend crashed with `TypeError: data.filter is not a function` immediately on load.
+**Root cause:** `files/route.ts` called `NextResponse.json(data)` without `{ status: res.status }`. When the backend returned HTTP 500 `{"detail":"..."}`, Next.js re-wrapped it as HTTP 200. `setFiles({"detail":"..."})` stored an object instead of an array. Then `files.filter(...)` crashed.
+**Fix:** Added `{ status: res.status }` to all `NextResponse.json()` calls + `Array.isArray(data)` guard in `listFiles()`.
+**Lesson:** Always propagate HTTP status codes through proxy routes. Never assume the shape of API responses.
+
+---
+
+### Hurdle 5 — Google embedding model not found / wrong dimensions
+**What happened:** `models/text-embedding-004 not found`. Then: dimension mismatch when inserting into Pinecone.
+**Root cause 1:** The old `google-generativeai` SDK was deprecated. The `text-embedding-004` model wasn't available on this API key. Migrated to new `google-genai` SDK.
+**Root cause 2:** `gemini-embedding-001` returns 3072-dim vectors by default. Our Pinecone index was 384-dim. Vectors were rejected.
+**Fix:** Used `output_dimensionality=768` parameter to truncate to 768-dim. Created new Pinecone index `legal-rag-768`. Re-indexed 676 vectors.
+**Lesson:** When switching embedding providers, the Pinecone index dimension must match exactly. Always check output dimensions.
+
+---
+
+### Hurdle 6 — Google free tier rate limit (429) during indexing
+**What happened:** Indexing stopped mid-way with `RESOURCE_EXHAUSTED`. Free tier allows 100 texts/minute — each text in a batch counts as 1 request.
+**Fix:** Batched 20 texts per API call. Added 13-second sleep between batches (20 texts × 4.6 batches/min ≈ 92 texts/min, safely under 100 limit). Added retry with exponential backoff extracting the `retryDelay` hint from the error response.
+**Lesson:** Free tiers count individual items, not API calls. Always throttle aggressively.
+
+---
+
+### Hurdle 7 — Gemini fallback LLM hitting limit: 0
+**What happened:** Users got `429 RESOURCE_EXHAUSTED` from Gemini with `limit: 0` for `generate_content`.
+**Root cause:** `LLM_PROVIDER` was not set in the Render dashboard (only in render.yaml, which dashboard vars override). Default `"auto"` tried Groq → Groq init failed → fell to Gemini. The Google API key was created for embeddings only — it had `limit: 0` for text generation.
+**Fix:** Added `LLM_PROVIDER=groq` explicitly in Render dashboard. Added runtime error handling in pipeline so rate limit errors return a friendly user message instead of HTTP 500.
+**Lesson:** render.yaml env vars are overridden by Render dashboard env vars. Always set critical vars in BOTH places.
+
+---
+
+### Hurdle 8 — ECHO MODE: Groq init failed silently
+**What happened:** App showed `[ECHO MODE]` — LLM not running despite `GROQ_API_KEY` being set.
+**Root cause:** `groq==0.12.0` passes a `proxies` argument to `httpx.Client.__init__()`. The latest `httpx` (0.28+) removed that parameter. `GroqGenerator.__init__()` threw `unexpected keyword argument 'proxies'`, `_try()` caught it silently, fell through to `EchoGenerator`.
+**Fix:** Upgraded `groq>=0.13.0` (compatible with httpx 0.28+). Added diagnostic log line in `get_generator()` to print provider and API key presence on first query.
+**Lesson:** Never pin SDKs to old patch versions. Transitive dependency upgrades (httpx) break older SDK versions silently.
+
+---
+
+## 10. Current Status — What Works, What Doesn't
+
+| Feature | Status | Notes |
 |---|---|---|
-| 60-120s cold start on first daily use | Medium | Render free tier sleep policy |
-| Groq free tier: 30 RPM rate limit | Medium | Multiple users hit quota quickly |
-| Single worker (WEB_CONCURRENCY=1) | Medium | Concurrent requests queue |
-| Google embedding latency ~1-2s/query | Low | API call vs local model — acceptable tradeoff for no OOM |
-| No response streaming | Low | Groq called with full response, not streamed |
-| Corrupted PDFs not indexed (5 files) | Low | Empty/password-protected PDFs |
-| `.xls` files not indexed (5 files) | Low | Old Excel format, needs xlrd integration fix |
-| CORS restricted to Vercel + localhost | Low | Fixed — was `allow_origins=["*"]` |
-| No authentication | Low | Open API, anyone with URL can query |
+| Backend live on Render | WORKING | legalragai.onrender.com |
+| Frontend live on Vercel | WORKING | legal-rag-ai.vercel.app |
+| Google embeddings (768-dim) | WORKING | gemini-embedding-001, ~1-2s/query |
+| Pinecone vector search | WORKING | legal-rag-768, 676 vectors |
+| Groq LLM (Llama 3.3 70B) | WORKING | After groq>=0.13.0 fix deployed |
+| File upload → auto-index | WORKING | Saves to temp, indexes to Pinecone |
+| Sidebar file list | WORKING | 244 files, 676 chunks |
+| Auto-retry on cold start | WORKING | 3 retries, 20s countdown |
+| Conversation recording | NOT BUILT | Supabase integration pending |
+| Response streaming | NOT BUILT | Full response sent at once |
+| Auth / access control | NOT BUILT | Open API |
+| UptimeRobot keep-alive | NOT SET UP | Cold starts still possible |
 
 ---
 
-## 10. Future Improvements (Priority Order)
+## 11. Road to Big Audience — Production Scaling Plan
 
-### HIGH PRIORITY — Performance & Multi-User
+### Stage 1: Still Free — Fix the Last Rough Edges (~1-2 days work)
 
-#### 10.1 Add UptimeRobot Keep-Alive (Free, 5 minutes)
-Eliminates cold starts completely. Sign up at uptimerobot.com, add HTTP monitor for `https://legalragai.onrender.com/api/health`, interval 5 minutes.
+These cost nothing and make the app noticeably better:
 
-#### 10.2 Preload Embedding Model at Startup
-Currently `all-MiniLM-L6-v2` loads on the **first query** (adds ~3-5 sec to first response). Fix: load it at server startup.
+**11.1 UptimeRobot Keep-Alive (0 cost, eliminates cold starts)**
+Sign up at uptimerobot.com. Add HTTP(S) monitor → `https://legalragai.onrender.com/api/health` → every 5 minutes.
+Render free tier sleeps after 15 min inactivity. UptimeRobot pings it every 5 min → never sleeps.
+Result: cold start drops from 60-120s → 0s for all users.
+
+**11.2 Supabase Conversation Logging (0 cost, 500MB free)**
+Every query + answer + sources saved to PostgreSQL. You can review what users are asking, spot gaps in your knowledge base, and build analytics.
 ```python
-# In backend/api.py startup event:
-@app.on_event("startup")
-async def startup_event():
-    import asyncio
-    asyncio.get_event_loop().run_in_executor(None, get_embedding_engine)
-    print("[Startup] LegalRagAI ready. Preloading embedding model...")
+# After pipeline.query() in api.py:
+supabase.table("conversations").insert({
+    "question": req.question,
+    "answer": result["answer"],
+    "chunks_retrieved": result["chunks_retrieved"],
+    "session_id": req.session_id,
+}).execute()
 ```
 
-#### 10.3 Add Response Streaming (SSE)
-Currently the LLM generates the full answer before sending. With streaming, tokens appear as they're generated (perceived latency drops from ~5s to near-instant).
+**11.3 Response Streaming (0 cost, feels 5x faster)**
+Groq supports token streaming. Instead of waiting 5s for a full answer, words appear as they're generated.
 ```python
-# In backend/api.py
-from fastapi.responses import StreamingResponse
 @app.post("/api/query/stream")
 async def query_stream(req: QueryRequest):
     async def generate():
-        # Groq supports streaming
         stream = groq_client.chat.completions.create(..., stream=True)
         for chunk in stream:
-            yield f"data: {chunk.choices[0].delta.content}\n\n"
+            token = chunk.choices[0].delta.content or ""
+            yield f"data: {json.dumps({'token': token})}\n\n"
     return StreamingResponse(generate(), media_type="text/event-stream")
 ```
 
-#### 10.4 Semantic Query Caching
-Cache embeddings + responses for similar queries. Prevents re-querying Pinecone + Groq for the same question.
+**11.4 Groq → Gemini Auto-Fallback on Rate Limit (0 cost, no downtime)**
+When Groq hits 30 RPM, auto-switch to Gemini 2.0 Flash (15 RPM free). Combined: 45 RPM.
 ```python
-# Simple in-memory cache (upgrade to Redis for multi-worker):
-from functools import lru_cache
-QUERY_CACHE = {}  # {question_hash: response}
-CACHE_THRESHOLD = 0.95  # cosine similarity
-
-def cached_query(question: str):
-    q_vec = embed_query(question)
-    for cached_q_vec, response in QUERY_CACHE.values():
-        if cosine_sim(q_vec, cached_q_vec) > CACHE_THRESHOLD:
-            return response
-    result = pipeline.query(question)
-    QUERY_CACHE[hash(question)] = (q_vec, result)
-    return result
-```
-
-#### 10.5 Groq Rate Limit Handling with Fallback
-When Groq hits 30 RPM, automatically fall back to Gemini. Currently fallback exists but isn't triggered by rate limits.
-```python
-# In generator.py, wrap Groq with rate limit detection:
+# In generator.py generate():
 try:
-    return groq_generate(...)
-except groq.RateLimitError:
-    return gemini_generate(...)  # auto-fallback
+    return self._groq_generate(query, context)
+except RateLimitError:
+    return GeminiGenerator().generate(query, context)
 ```
-
-#### 10.6 Async RAG Pipeline
-The current pipeline is synchronous. For multiple concurrent users, each request blocks a thread. Make retrieval and generation async.
-```python
-# In pipeline.py:
-async def query_async(question: str, ...):
-    chunks = await asyncio.to_thread(query_collection, question, n_results)
-    answer = await asyncio.to_thread(generate, question, chunks)
-    return format_response(answer, chunks)
-```
-
-### MEDIUM PRIORITY — Features
-
-#### 10.7 Conversation Memory / Multi-Turn
-Currently each query is independent. Add conversation history so follow-up questions have context.
-```python
-# In QueryRequest:
-class QueryRequest(BaseModel):
-    question: str
-    history: list[dict] = []  # [{"role": "user", "content": "..."}, ...]
-```
-
-#### 10.8 Better Chunking for Legal Documents
-Legal documents have specific structure (sections, clauses, exhibits). A legal-aware chunker would:
-- Split on "WHEREAS", "NOW THEREFORE", numbered sections
-- Keep exhibit references together
-- Preserve paragraph structure
-
-#### 10.9 Re-ranking with Cross-Encoder
-After Pinecone retrieves top-k by cosine similarity, re-rank with a cross-encoder (more accurate relevance scoring). Use `cross-encoder/ms-marco-MiniLM-L-6-v2` (free).
-
-#### 10.10 Document Summarization Endpoint
-`GET /api/summarize?file=ARS_044_...pdf` — summarize a specific document using the LLM.
-
-#### 10.11 Fix Old .xls Files
-5 old-format Excel files failed. Fix: add xlrd fallback in `document_router.py`:
-```python
-# In parse_xlsx():
-try:
-    wb = openpyxl.load_workbook(path, read_only=True)
-except InvalidFileException:
-    import xlrd
-    wb = xlrd.open_workbook(path)
-```
-
-### LOW PRIORITY — Production Hardening
-
-#### 10.12 Add Authentication
-Add API key middleware to prevent unauthorized access:
-```python
-# Simple: check X-API-Key header
-# Better: Clerk.dev or Auth.js for the frontend
-```
-
-#### 10.13 Restrict CORS
-Change `allow_origins=["*"]` to `allow_origins=["https://legal-rag-ai.vercel.app"]` in `backend/api.py`.
-
-#### 10.14 Add Request Rate Limiting
-Use `slowapi` to limit requests per IP:
-```python
-from slowapi import Limiter
-limiter = Limiter(key_func=get_remote_address)
-@app.post("/api/query")
-@limiter.limit("10/minute")
-def query_endpoint(req: QueryRequest): ...
-```
-
-#### 10.15 Upgrade to Render Paid ($7/month)
-- No cold starts
-- 512MB → 1GB RAM
-- Multiple workers possible
-- Persistent disk
-
-#### 10.16 ~~Switch to Google Embeddings~~ ✅ DONE
-Google embeddings (`gemini-embedding-001`) are now the default. torch + sentence-transformers have been removed. OOM issue resolved.
 
 ---
 
-## 11. Common Commands
+### Stage 2: Small Budget — 10-100 Concurrent Users (~$15-30/month)
+
+| Upgrade | Cost | What it fixes |
+|---|---|---|
+| Render Starter ($7/mo) | $7/mo | No cold starts, 1GB RAM, always-on |
+| Groq paid tier | $0.05/1M tokens | 600 RPM instead of 30 RPM |
+| Pinecone Starter ($0/mo → $70/mo) | Free up to 100k vectors | Already covered for current data |
+| Upstash Redis ($0-10/mo) | ~$3/mo | Cross-worker query cache, session store |
+| **Total** | **~$10-15/mo** | Handles 100+ concurrent users |
+
+With $15/month this system handles 10-100 daily active users with sub-3s response times.
+
+---
+
+### Stage 3: Growth — 100-1000 Concurrent Users (~$100-300/month)
+
+| Upgrade | Cost | What it fixes |
+|---|---|---|
+| Render Standard (2 workers) | $25/mo | 2 concurrent requests without queuing |
+| OpenAI `text-embedding-3-small` | $0.02/1M tokens | Faster, cheaper than Google API |
+| Pinecone Standard | $70/mo | 5M vectors, dedicated pod, faster queries |
+| Redis (Upstash Pro) | $20/mo | Distributed cache across workers |
+| Supabase Pro | $25/mo | Conversation analytics, user auth |
+| CDN (Cloudflare free) | $0 | Cache static assets, DDoS protection |
+| **Total** | **~$140/mo** | Handles 1000+ daily active users |
+
+---
+
+### Stage 4: Production Scale — 10,000+ Users (~$500-2000/month)
+
+| Component | Technology | Cost | Reason |
+|---|---|---|---|
+| Backend | AWS ECS / Fly.io (auto-scale) | $100-400/mo | Scale to 10+ workers on demand |
+| Embeddings | OpenAI or self-hosted `bge-m3` | $50-200/mo | Volume discounts |
+| Vector DB | Pinecone Enterprise or Weaviate Cloud | $200-500/mo | Dedicated hardware, <10ms search |
+| LLM | Groq + Claude Haiku fallback | $100-300/mo | Groq for speed, Claude for quality |
+| Cache | Redis Enterprise | $50/mo | Sub-ms cache hits |
+| Auth | Clerk.dev | $25/mo | User accounts, session management |
+| Monitoring | Datadog / Grafana Cloud | $30/mo | Latency alerts, error tracking |
+| **Total** | | **$500-1500/mo** | Enterprise-grade, <2s P99 latency |
+
+---
+
+### Stage 5: World-Class RAG System — What Separates Top Systems
+
+These are the architectural differences between a demo and a system like Harvey AI (valued at $3B):
+
+**A. Hybrid Search (BM25 + Vector)**
+Pure vector search misses exact keyword matches (case numbers, names, dates). Top systems combine:
+- Vector search: semantic meaning
+- BM25 keyword search: exact terms
+- Fusion ranking: merge both result lists
+```python
+# Pinecone supports hybrid search natively
+results = index.query(vector=q_vec, sparse_vector=bm25_vec, top_k=20)
+```
+
+**B. Re-ranking (Cross-Encoder)**
+After retrieving 20 candidates, re-rank with a cross-encoder model that scores query+document pairs directly. Accuracy jumps from ~70% to ~90% relevance.
+```python
+from sentence_transformers import CrossEncoder
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+scores = reranker.predict([(query, chunk["text"]) for chunk in candidates])
+```
+
+**C. Legal-Aware Chunking**
+Generic 1000-char chunking splits mid-sentence, mid-clause, mid-citation. Legal documents have structure:
+- Split on section headers, numbered clauses, exhibit references
+- Keep "WHEREAS ... NOW THEREFORE" clauses together
+- Preserve citation context (case names, docket numbers, dates)
+
+**D. Multi-Turn Conversation Memory**
+Each query is currently independent. Top systems maintain context across turns:
+- User: "What did the court decide?"
+- System: finds answer
+- User: "Why?" ← needs to know what "why" refers to
+Store last 5 turns in session → append to prompt → coherent conversation.
+
+**E. Document-Level Summarization**
+Before chunking, generate a 1-paragraph summary of each document. Store it as a special "document overview" vector. When a query matches an overview, retrieve the full document for deeper analysis.
+
+**F. Confidence Scoring**
+Top systems tell users how confident they are. If top chunk score < 0.4, say "I found related information but it may not directly answer your question." If score < 0.15, say "I couldn't find relevant information."
+
+**G. Streaming + Progressive Enhancement**
+- Stream tokens as they generate (feels instant)
+- Show source cards as they're retrieved (before LLM finishes)
+- Allow follow-up questions while answer is streaming
+
+---
+
+## 12. Latency Breakdown — Where Time Is Spent Per Query
+
+```
+User hits Enter
+    │
+    ├─ Network: browser → Vercel → Render         ~100-300ms
+    │
+    ├─ Embedding: Google gemini-embedding-001      ~800-1200ms  ← biggest bottleneck
+    │
+    ├─ Pinecone search: top_k=8 cosine scan        ~50-150ms
+    │
+    ├─ LLM: Groq Llama 3.3 70B (2048 tokens)      ~1500-3000ms
+    │
+    └─ Response back to browser                    ~100-200ms
+
+TOTAL current P50: ~3-5 seconds
+TOTAL current P99: ~8-12 seconds (cold start + rate retry)
+```
+
+**How to get to <1 second P50:**
+
+| Optimization | Latency saved | Cost |
+|---|---|---|
+| Stream LLM tokens | Perceived -3s (first token in 200ms) | Free |
+| Cache repeated queries (Redis) | -4s for cache hits (~30% of traffic) | $3/mo |
+| Precompute embeddings at upload time | 0 at query time | Free |
+| Groq paid tier (higher speed) | -500ms | $0.05/1M tokens |
+| Pinecone dedicated pod | -100ms on search | $70/mo |
+| Move Render to same AWS region as Pinecone (us-east-1) | -50ms | $0 (config change) |
+| Parallel embed + prefetch | -200ms (overlap network calls) | Free |
+
+**Realistic targets:**
+- Free tier: 3-5s P50, 8-12s P99
+- $15/month: 2-3s P50, 5-8s P99
+- $150/month: 1-2s P50, 3-5s P99
+- $1500/month: <500ms P50, <2s P99 (streaming makes P50 feel ~100ms)
+
+---
+
+## 13. Common Commands
 
 ### Local Development
 ```bash
@@ -588,7 +655,7 @@ python ingest.py --download auto --limit 200
 
 ---
 
-## 12. Critical Files — What NOT to Change Without Understanding
+## 14. Critical Files — What NOT to Change Without Understanding
 
 | File | Risk | Why |
 |---|---|---|
@@ -601,7 +668,7 @@ python ingest.py --download auto --limit 200
 
 ---
 
-## 13. Architecture Decision Log
+## 15. Architecture Decision Log
 
 | Decision | Reason |
 |---|---|
