@@ -26,8 +26,12 @@ export async function loginUser(username: string, password: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || data.error || "Login failed");
+  let data: Record<string, string> = {};
+  try { data = await res.json(); } catch { /* HTML response — backend not ready */ }
+  if (res.status === 404 || res.status === 503) {
+    throw new Error("Backend is still starting up — wait 30 seconds and try again.");
+  }
+  if (!res.ok) throw new Error(data.detail || data.error || "Invalid username or password");
   localStorage.setItem("auth_token", data.token);
   localStorage.setItem("auth_user", JSON.stringify({ username: data.username, role: data.role }));
   return data;
