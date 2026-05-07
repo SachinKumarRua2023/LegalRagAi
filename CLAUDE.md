@@ -1,5 +1,5 @@
 # CompleteRagAI — Full Project Documentation
-> Last updated: 2026-05-07 | For AI assistants: read this entire file before making any changes.
+> Last updated: 2026-05-07 (session 2) | For AI assistants: read this entire file before making any changes.
 
 ---
 
@@ -15,7 +15,7 @@ A **production-deployed RAG (Retrieval-Augmented Generation) system** for US leg
 **Live URLs:**
 - Frontend: `https://legal-rag-ai.vercel.app` (Next.js on Vercel)
 - Backend API: `https://legalragai.onrender.com` (FastAPI on Render free tier)
-- Pinecone index: `legal-rag` (aws / us-east-1, 384-dim cosine)
+- Pinecone index: `legal-rag-768` (aws / us-east-1, 768-dim cosine)
 - GitHub: `https://github.com/SachinKumarRua2023/LegalRagAi`
 
 ---
@@ -29,7 +29,7 @@ A **production-deployed RAG (Retrieval-Augmented Generation) system** for US leg
 | LLM (primary) | Groq — Llama 3.3 70B | Free tier: 30 RPM, 14,400 req/day |
 | LLM (fallback) | Google Gemini 1.5 Flash | Free tier: 15 RPM, 1M tokens/day |
 | LLM (fallback) | Anthropic Claude Haiku | Paid |
-| Embeddings | sentence-transformers all-MiniLM-L6-v2 | Local, 384-dim, CPU, FREE |
+| Embeddings | Google gemini-embedding-001 | API, 768-dim, FREE (1M tokens/day), no torch needed |
 | Vector DB | Pinecone (cloud) | Free tier: 2GB, 100k vectors |
 | Vector DB (local dev) | ChromaDB | Local SQLite, not used in prod |
 | Document parsing | pdfplumber, python-docx, python-pptx, openpyxl | 14+ file formats |
@@ -122,13 +122,14 @@ LLM_PROVIDER=groq                         # "groq" | "gemini" | "claude" | "auto
 GROQ_API_KEY=gsk_...                      # SECRET
 GROQ_MODEL=llama-3.3-70b-versatile
 
-EMBEDDING_MODEL=local                     # "local" | "google"
-                                          # local = sentence-transformers (no API key, free)
-                                          # google = text-embedding-004 (needs GOOGLE_API_KEY)
+EMBEDDING_MODEL=google                    # "local" | "google"
+                                          # google = gemini-embedding-001, 768-dim, FREE (needs GOOGLE_API_KEY)
+                                          # local = sentence-transformers, 384-dim (NOT used in prod — OOM risk)
+GOOGLE_API_KEY=...                        # SECRET — required for google embeddings
 
 VECTOR_DB_PROVIDER=pinecone               # "pinecone" | "chromadb"
 PINECONE_API_KEY=pcsk_...                 # SECRET
-PINECONE_INDEX_NAME=legal-rag
+PINECONE_INDEX_NAME=legal-rag-768         # 768-dim index (matches Google embeddings)
 PINECONE_CLOUD=aws
 PINECONE_REGION=us-east-1
 
@@ -152,16 +153,14 @@ BACKEND_URL=https://legalragai.onrender.com
 
 ## 5. Data Currently in Pinecone
 
-**Index:** `legal-rag` | **Dimension:** 384 | **Metric:** cosine | **Provider:** aws us-east-1
+**Index:** `legal-rag-768` | **Dimension:** 768 | **Metric:** cosine | **Provider:** aws us-east-1
 
 | Source | Files | Chunks |
 |---|---|---|
-| data/raw/mixed (scotus + casehold TXT) | 206 | ~471 |
-| data/lawsuit_organized_deduped | 38 | ~255 |
-| data/lawsuit_2026_april | 41 | ~167 (some overlapped) |
-| **Total** | **285** | **~834 unique vectors** |
+| data/lawsuit_organized_deduped | ~38 | ~676 |
+| **Total** | **~38** | **~676 unique vectors** |
 
-**Storage:** 1.81 MB / 2 GB (plenty of headroom)
+**Storage:** well under 2 GB limit (plenty of headroom)
 
 **Key lawsuit documents indexed:**
 - ARS court filings, motions, affirmations (NYSCEF)
@@ -179,7 +178,7 @@ BACKEND_URL=https://legalragai.onrender.com
 2. POST /api/chat (Next.js route) → POST https://legalragai.onrender.com/api/query
 3. FastAPI receives QueryRequest { question, top_k=5, filter_file?, filter_folder?, filter_file_type? }
 4. pipeline.query() runs:
-   a. RETRIEVE: embeddings.embed_query(question) → 384-dim vector
+   a. RETRIEVE: embeddings.embed_query(question) → 768-dim vector (Google gemini-embedding-001)
                pinecone_client.query_collection(vector, top_k=8) → top chunks
                Each chunk has: text, source_file, source_path, relevance_score
    b. FILTER: chunks with score < 0.15 are discarded
@@ -214,7 +213,7 @@ Vercel (legal-rag-ai.vercel.app)
     ▼
 Render Free Tier (legalragai.onrender.com)
   FastAPI + Uvicorn (single worker, WEB_CONCURRENCY=1)
-  - Loads sentence-transformers model on first query
+  - Calls Google embedding API on each query (no local model load)
   - Connects to Pinecone on each query
   - Calls Groq API for generation
     │
@@ -224,7 +223,7 @@ Render Free Tier (legalragai.onrender.com)
 
 **Important Render free tier constraints:**
 - Sleeps after 15 minutes of inactivity (cold start = 60-120 seconds)
-- 512 MB RAM (torch model uses ~150-200 MB)
+- 512 MB RAM (Google embeddings use ~130 MB — torch removed)
 - Single CPU, single worker
 - No persistent disk (data must be in Pinecone, not ChromaDB)
 
@@ -238,26 +237,46 @@ Render Free Tier (legalragai.onrender.com)
 
 ## 8. What Was Built & Fixed (Session History — 2026-05-07)
 
-### Data Ingestion
-- Indexed 834 unique vectors into Pinecone from lawsuit docs + scotus/casehold cases
+### Session 1 — Initial Build & Deployment Fixes
+- Indexed 834 unique vectors into Pinecone (384-dim `legal-rag` index)
 - Fixed Windows encoding bug in `indexer.py` (replaced ✓/✗ with OK/ERR for cp1252 compatibility)
 - Added `GROQ_MODEL` to `.env` and `render.yaml`
-- Fixed `.xls` support issue (openpyxl doesn't support old XLS — xlrd already in requirements)
-
-### Deployment Fixes
-- **Root cause 1:** `vector_client.py` was eagerly importing both `chroma_client` AND `pinecone_client` at module load time. `import chromadb` is heavy and blocked uvicorn from binding the port. Fixed to lazy imports inside `_get_client()`.
-- **Root cause 2:** Startup event called `get_index_status()` → `list_indexed_files()` → Pinecone `top_k=10000` query, blocking the async event loop. Replaced with a single print statement.
+- **Root cause 1:** `vector_client.py` eager imports crashed Render startup → fixed to lazy imports
+- **Root cause 2:** Startup event blocked async event loop with Pinecone query → replaced with print
 - Fixed `next.config.ts` → `next.config.mjs` (Vercel doesn't support .ts config)
-- Removed `@backend-url` secret reference from `vercel.json` (use plain env var instead)
-
-### Frontend Fixes
-- All 4 API routes (`chat`, `status`, `files`, `upload`) now check `content-type` before `.json()` — cold-start HTML pages no longer crash
-- `apiFetch` in `lib/api.ts` now extracts `error` field from JSON error bodies — friendly messages in chat
-- `page.tsx` now keeps Sidebar always mounted (CSS hide/show) — prevents remount API call spam
-- Added backend status indicator (yellow "warming up" / green "connected") in header
-- Added warming-up banner with explanation
-- Fixed header subtitle: "ChromaDB" → "Pinecone · Groq"
+- Removed `@backend-url` secret reference from `vercel.json`
+- All 4 frontend API routes handle HTML cold-start responses without crashing
+- Added backend status indicator + warming-up banner in header
 - Added scales-of-justice SVG favicon (`app/icon.svg`)
+
+### Session 2 — OOM Fix, Google Embeddings, Re-index (2026-05-07)
+
+**Problem:** Render 512MB OOM — torch + sentence-transformers used ~300MB, triggered OOM kill.
+
+**Solution:** Switched entirely to Google `gemini-embedding-001` (no torch, ~130MB usage).
+
+**Changes:**
+- `requirements.txt`: Removed `torch`, `sentence-transformers`. Added `google-genai>=1.0.0`.
+- `src/vector_db/embeddings.py`: Rewrote `GoogleEmbeddingEngine` using new `google.genai` SDK.
+  - Uses `gemini-embedding-001` with `output_dimensionality=768`
+  - Batches 20 texts/call, 13s sleep between batches (stays under 100 texts/min free tier)
+  - Retry with backoff on 429 errors (extracts `retryDelay` from error message)
+- `src/vector_db/pinecone_client.py`:
+  - `_embedding_dimension()` now reads from active engine (dynamic, not hardcoded 384)
+  - `list_indexed_files()` caches results 5 min to prevent repeated 10k-vector scans (OOM fix)
+  - Reduced `top_k` from 10000 to 1000 for file listing
+- `src/rag/generator.py`: Updated `GeminiGenerator` to use new `google.genai` SDK
+- `config/settings.py`: `GOOGLE_EMBEDDING_MODEL = "gemini-embedding-001"`
+- `.env`: `EMBEDDING_MODEL=google`, `PINECONE_INDEX_NAME=legal-rag-768`
+- `render.yaml`: `EMBEDDING_MODEL: google`, `PINECONE_INDEX_NAME: legal-rag-768`
+
+**New Pinecone index:** `legal-rag-768` (768-dim, cosine, aws us-east-1) — re-indexed 676 vectors.
+
+**Frontend bug fixes:**
+- `files/route.ts` + `status/route.ts`: Added `{ status: res.status }` to `NextResponse.json()` — missing this caused backend 500 errors to appear as 200, crashing the app with `TypeError: .filter is not a function`
+- `lib/api.ts`: `apiFetch` now handles FastAPI `{"detail":"..."}` error format + `Array.isArray` guard on `listFiles()`
+- `ChatWindow.tsx`: Auto-retry with 20s countdown on backend warmup errors (up to 3 retries)
+- `Message.tsx`: Shows `msg.content` as loading text during retry countdown
 
 ---
 
@@ -268,10 +287,11 @@ Render Free Tier (legalragai.onrender.com)
 | 60-120s cold start on first daily use | Medium | Render free tier sleep policy |
 | Groq free tier: 30 RPM rate limit | Medium | Multiple users hit quota quickly |
 | Single worker (WEB_CONCURRENCY=1) | Medium | Concurrent requests queue |
+| Google embedding latency ~1-2s/query | Low | API call vs local model — acceptable tradeoff for no OOM |
 | No response streaming | Low | Groq called with full response, not streamed |
 | Corrupted PDFs not indexed (5 files) | Low | Empty/password-protected PDFs |
 | `.xls` files not indexed (5 files) | Low | Old Excel format, needs xlrd integration fix |
-| CORS allows all origins | Low | `allow_origins=["*"]` in api.py |
+| CORS restricted to Vercel + localhost | Low | Fixed — was `allow_origins=["*"]` |
 | No authentication | Low | Open API, anyone with URL can query |
 
 ---
@@ -409,12 +429,8 @@ def query_endpoint(req: QueryRequest): ...
 - Multiple workers possible
 - Persistent disk
 
-#### 10.16 Switch to Google Embeddings for Deployment
-`EMBEDDING_MODEL=local` requires torch + sentence-transformers (heavy). Switching to `EMBEDDING_MODEL=google` would:
-- Eliminate torch from the container (~500MB smaller image)
-- Faster startup
-- Free (1M tokens/day)
-- Requires GOOGLE_API_KEY
+#### 10.16 ~~Switch to Google Embeddings~~ ✅ DONE
+Google embeddings (`gemini-embedding-001`) are now the default. torch + sentence-transformers have been removed. OOM issue resolved.
 
 ---
 
@@ -491,7 +507,7 @@ python ingest.py --download auto --limit 200
 | Decision | Reason |
 |---|---|
 | Pinecone over ChromaDB for prod | ChromaDB requires persistent disk (not available on Render free) |
-| Local embeddings (sentence-transformers) | Free, no API key, good quality for legal text |
+| Google embeddings (gemini-embedding-001) | No torch/OOM risk, free 1M tokens/day, 768-dim better than 384 |
 | Groq primary LLM | Fastest free tier, 30 RPM sufficient for demo |
 | Lazy import of vector DB clients | Eager chromadb import blocked uvicorn port binding |
 | Next.js API route proxy | Hides BACKEND_URL from browser, enables server-side env vars |
