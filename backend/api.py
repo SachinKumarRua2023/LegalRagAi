@@ -44,34 +44,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Auto-download and index sample legal data on first server start."""
-    try:
-        from src.vector_db.indexer import get_index_status, index_directory
-        from src.data_ingestion.downloaders.auto_downloader import download_mixed_legal_data
-        from config.settings import DATA_RAW_PATH
-
-        status = get_index_status()
-        total_chunks = status.get("total_chunks", 0)
-
-        if total_chunks == 0:
-            print("[Startup] Vector DB empty. Downloading 1-3GB sample legal data...")
-            print("[Startup] This only happens once. Please wait...")
-
-            # Download ~1-3GB of cases (1500 SCOTUS + 1500 CaseHOLD)
-            result = download_mixed_legal_data(cases_per_topic=1500)
-            print(f"[Startup] Downloaded {result['total_cases']} cases, {result['files_created']} files")
-
-            # Index to vector DB
-            idx_result = index_directory(DATA_RAW_PATH / "mixed", recursive=True)
-            print(f"[Startup] Indexed {idx_result['indexed']} files, {idx_result['collection_total_chunks']} chunks")
-
-            final_status = get_index_status()
-            print(f"[Startup] ✓ Ready: {final_status.get('total_chunks', 0)} chunks indexed")
-        else:
-            print(f"[Startup] ✓ Vector DB ready: {total_chunks} chunks indexed")
-    except Exception as e:
-        print(f"[Startup] Warning: Auto-install failed: {e}")
-        print("[Startup] You can manually run: python ingest.py --download auto")
+    """Lightweight startup — Pinecone data is pre-loaded, no download needed."""
+    print("[Startup] LegalRagAI ready. Vector DB: Pinecone (pre-loaded).")
 
 
 # ── Request / Response models ─────────────────────────────────────────────────

@@ -4,15 +4,13 @@ from typing import Any
 
 from config.settings import VECTOR_DB_PROVIDER
 
-# Import both clients
-from src.vector_db import chroma_client
-from src.vector_db import pinecone_client
-
 
 def _get_client():
-    """Return active vector DB client based on config."""
+    """Return active vector DB client based on config (lazy import — avoids loading unused DB)."""
     if VECTOR_DB_PROVIDER.lower() == "pinecone":
+        from src.vector_db import pinecone_client
         return pinecone_client
+    from src.vector_db import chroma_client
     return chroma_client
 
 
