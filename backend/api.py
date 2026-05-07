@@ -50,6 +50,8 @@ async def startup_event():
     """Preload embedding model in background so first query has no cold-start penalty."""
     import threading
     def _preload():
+        import time
+        time.sleep(10)  # let uvicorn fully bind before loading torch
         try:
             from src.vector_db.embeddings import get_embedding_engine
             get_embedding_engine()

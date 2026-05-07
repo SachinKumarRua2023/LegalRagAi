@@ -181,18 +181,23 @@ def collection_stats() -> dict:
         return {"collection": PINECONE_INDEX_NAME, "total_chunks": 0, "db_path": "pinecone.io"}
 
 
+_files_cache: tuple[float, list[dict]] | None = None
+_FILES_CACHE_TTL = 300  # 5 minutes — avoids repeated 10k-vector Pinecone scans
+
 def list_indexed_files() -> list[dict]:
-    """List unique files by scanning metadata (approximate via sampling)."""
+    """List unique files. Result is cached for 5 min to keep memory usage low."""
+    global _files_cache
+    import time
+    now = time.time()
+    if _files_cache and now - _files_cache[0] < _FILES_CACHE_TTL:
+        return _files_cache[1]
     try:
         index = get_index()
-        # Note: Pinecone doesn't support listing all IDs easily
-        # We query with empty vector to get sample
         results = index.query(
-            vector=[0.0] * 384,  # Dummy vector
-            top_k=10000,
+            vector=[0.0] * 384,
+            top_k=1000,  # well above our ~834 vectors; avoids loading 10k objects
             include_metadata=True,
         )
-        
         seen: dict[str, dict] = {}
         for match in results.matches:
             meta = match.metadata or {}
@@ -205,6 +210,8 @@ def list_indexed_files() -> list[dict]:
                     "file_type": meta.get("file_type", ""),
                     "document_type": meta.get("document_type", ""),
                 }
-        return list(seen.values())
+        result = list(seen.values())
+        _files_cache = (now, result)
+        return result
     except Exception:
         return []
