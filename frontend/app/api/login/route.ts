@@ -5,19 +5,11 @@ const BACKEND = process.env.BACKEND_URL || "http://localhost:8000";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const auth = req.headers.get("authorization") || "";
-    const res = await fetch(`${BACKEND}/api/query`, {
+    const res = await fetch(`${BACKEND}/api/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(auth && { Authorization: auth }) },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) {
-      return NextResponse.json(
-        { error: "Backend is starting up, please retry in 30 seconds." },
-        { status: 503 }
-      );
-    }
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch (e: unknown) {

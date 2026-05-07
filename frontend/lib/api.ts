@@ -1,19 +1,53 @@
 import type { QueryResponse, IndexedFile, IndexStatus } from "./types";
 
-// In the browser, calls go to Next.js API proxy routes (/api/*)
-// Those routes forward to BACKEND_URL (server-side env var → safe)
 const BASE = "";
+
+function getAuthHeader(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const token = localStorage.getItem("auth_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export function getStoredUser(): { username: string; role: string } | null {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem("auth_user");
+  try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+
+export function logout() {
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("auth_user");
+  window.location.href = "/login";
+}
+
+export async function loginUser(username: string, password: string) {
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || data.error || "Login failed");
+  localStorage.setItem("auth_token", data.token);
+  localStorage.setItem("auth_user", JSON.stringify({ username: data.username, role: data.role }));
+  return data;
+}
 
 async function apiFetch(path: string, init?: RequestInit) {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { "Content-Type": "application/json", ...getAuthHeader(), ...init?.headers },
     ...init,
   });
+  if (res.status === 401) {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_user");
+    window.location.href = "/login";
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     let msg = res.statusText;
     try {
       const json = await res.json();
-      // Handle both {"error":"..."} (our routes) and {"detail":"..."} (FastAPI default)
       msg = json.error || json.detail || json.message || res.statusText;
     } catch {}
     throw new Error(msg);
@@ -48,7 +82,8 @@ export async function getStatus(): Promise<IndexStatus> {
 export async function uploadFile(file: File): Promise<{ status: string; file: string; result: { chunks_added?: number } }> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch("/api/upload", { method: "POST", body: form });
+  const res = await fetch("/api/upload", { method: "POST", headers: getAuthHeader(), body: form });
+  if (res.status === 401) { logout(); throw new Error("Session expired"); }
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

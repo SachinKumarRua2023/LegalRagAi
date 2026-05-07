@@ -1,23 +1,31 @@
 "use client";
 import { useState, useEffect } from "react";
-import { Scale, Moon, Sun, Menu, X, Wifi, WifiOff } from "lucide-react";
+import { Scale, Moon, Sun, Menu, X, Wifi, WifiOff, LogOut } from "lucide-react";
+import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import ChatWindow from "@/components/ChatWindow";
+import { getStoredUser, logout } from "@/lib/api";
 
 export default function Home() {
+  const router = useRouter();
   const [activeFile, setActiveFile] = useState<string | undefined>();
   const [dark, setDark] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [backendStatus, setBackendStatus] = useState<"unknown" | "up" | "warming">("unknown");
+  const [currentUser, setCurrentUser] = useState<{ username: string; role: string } | null>(null);
 
   useEffect(() => {
+    const user = getStoredUser();
+    if (!user) { router.replace("/login"); return; }
+    setCurrentUser(user);
+
     const saved = localStorage.getItem("theme");
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     if (saved === "dark" || (!saved && prefersDark)) {
       setDark(true);
       document.documentElement.classList.add("dark");
     }
-  }, []);
+  }, [router]);
 
   // Wake up backend on load + keep alive every 10 min
   useEffect(() => {
@@ -79,12 +87,27 @@ export default function Home() {
               {activeFile}
             </span>
           )}
+          {currentUser && (
+            <span className="hidden sm:flex items-center gap-1.5 text-xs bg-blue-900/60 text-blue-200 px-2.5 py-1 rounded-full border border-blue-700">
+              {currentUser.username}
+              {currentUser.role === "admin" && (
+                <span className="text-[10px] bg-[#c9a84c]/20 text-[#c9a84c] px-1 rounded">admin</span>
+              )}
+            </span>
+          )}
           <button
             onClick={toggleDark}
             className="p-1.5 rounded-lg hover:bg-blue-800 transition-colors"
             title="Toggle dark mode"
           >
             {dark ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+          <button
+            onClick={logout}
+            className="p-1.5 rounded-lg hover:bg-red-800/50 text-red-300 hover:text-red-200 transition-colors"
+            title="Sign out"
+          >
+            <LogOut size={16} />
           </button>
         </div>
       </header>

@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -24,6 +24,7 @@ from src.rag.pipeline import query as rag_query
 from src.vector_db.indexer import index_file, index_directory, get_index_status
 from src.vector_db.vector_client import list_indexed_files
 from config.settings import DATA_UPLOADS_PATH, SUPPORTED_EXTENSIONS
+from backend.auth import authenticate, get_current_user
 
 app = FastAPI(
     title="CompleteRagAI — Legal Research API",
@@ -52,6 +53,11 @@ async def startup_event():
 
 # ── Request / Response models ─────────────────────────────────────────────────
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class QueryRequest(BaseModel):
     question: str
     top_k: int = 5
@@ -79,8 +85,14 @@ def health():
     return {"status": "healthy"}
 
 
+@app.post("/api/login")
+def login(req: LoginRequest):
+    """Authenticate and return a JWT token."""
+    return authenticate(req.username, req.password)
+
+
 @app.post("/api/query", response_model=QueryResponse)
-def query_endpoint(req: QueryRequest):
+def query_endpoint(req: QueryRequest, user: dict = Depends(get_current_user)):
     """Run a RAG query against the vector database."""
     try:
         result = rag_query(
@@ -96,8 +108,8 @@ def query_endpoint(req: QueryRequest):
 
 
 @app.get("/api/files")
-def list_files():
-    """List all files currently indexed in ChromaDB."""
+def list_files(user: dict = Depends(get_current_user)):
+    """List all files currently indexed in the vector DB."""
     try:
         return list_indexed_files()
     except Exception as e:
@@ -106,7 +118,7 @@ def list_files():
 
 @app.get("/api/status")
 def index_status():
-    """Get vector database statistics."""
+    """Get vector database statistics (public — used for keep-alive ping)."""
     try:
         return get_index_status()
     except Exception as e:
@@ -114,8 +126,12 @@ def index_status():
 
 
 @app.post("/api/upload")
-async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    """Upload a file and index it in the background."""
+async def upload_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
+):
+    """Upload a file and index it into the vector DB, tagged with the uploader."""
     ext = Path(file.filename).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
@@ -127,9 +143,8 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # Index synchronously (small files are fast enough)
-    result = index_file(dest)
-    return {"status": "indexed", "file": file.filename, "result": result}
+    result = index_file(dest, extra_metadata={"uploaded_by": user["username"]})
+    return {"status": "indexed", "file": file.filename, "uploaded_by": user["username"], "result": result}
 
 
 @app.post("/api/ingest/download")

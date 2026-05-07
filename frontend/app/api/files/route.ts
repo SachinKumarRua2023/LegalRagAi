@@ -1,10 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND = process.env.BACKEND_URL || "http://localhost:8000";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = req.headers.get("authorization") || "";
   try {
-    const res = await fetch(`${BACKEND}/api/files`, { cache: "no-store" });
+    const res = await fetch(`${BACKEND}/api/files`, {
+      cache: "no-store",
+      headers: auth ? { Authorization: auth } : {},
+    });
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("application/json")) {
       return NextResponse.json([], { status: 503 });

@@ -5,8 +5,10 @@ const BACKEND = process.env.BACKEND_URL || "http://localhost:8000";
 export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
+    const auth = req.headers.get("authorization") || "";
     const res = await fetch(`${BACKEND}/api/upload`, {
       method: "POST",
+      headers: auth ? { Authorization: auth } : {},
       body: form,
     });
     const ct = res.headers.get("content-type") || "";
