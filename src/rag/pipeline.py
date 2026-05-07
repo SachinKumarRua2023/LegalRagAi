@@ -47,7 +47,19 @@ def query(
 
     # 3. Generate answer
     generator = get_generator()
-    answer = generator.generate(question, context)
+    try:
+        answer = generator.generate(question, context)
+    except Exception as e:
+        err = str(e)
+        if "rate limit" in err.lower() or "429" in err or "busy" in err.lower():
+            answer = (
+                "**The AI service is temporarily busy (rate limit reached).** "
+                "Please wait 30 seconds and try your question again.\n\n"
+                f"*Retrieved {len(results)} relevant document chunks — the documents are ready, "
+                "only the AI response step failed.*"
+            )
+        else:
+            raise
 
     # 4. Build source list (deduplicated) with content preview
     seen_paths: set[str] = set()

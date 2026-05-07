@@ -46,21 +46,38 @@ class GroqGenerator:
         print(f"[LLM] Groq ready: {GROQ_MODEL}")
 
     def generate(self, query: str, context: str) -> str:
+        import time
         prompt = (
             f"Context Documents:\n{context}\n\n"
             f"User Question: {query}\n\n"
             f"Answer (always cite [Source N] tags from above):"
         )
-        resp = self._client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=2048,
-            temperature=0.1,
-        )
-        return resp.choices[0].message.content
+        for attempt in range(3):
+            try:
+                resp = self._client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=2048,
+                    temperature=0.1,
+                )
+                return resp.choices[0].message.content
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "rate_limit" in err.lower() or "rate limit" in err.lower():
+                    if attempt < 2:
+                        wait = 20 * (attempt + 1)
+                        print(f"[Groq] Rate limited — waiting {wait}s (attempt {attempt+1}/3)…")
+                        time.sleep(wait)
+                    else:
+                        raise RuntimeError(
+                            "The AI service is currently busy (rate limit reached). "
+                            "Please wait 30 seconds and try again."
+                        ) from e
+                else:
+                    raise
 
 
 # ── Gemini (FREE — 15 RPM, 1M tokens/day) ────────────────────────────────────
