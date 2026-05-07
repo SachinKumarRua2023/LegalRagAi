@@ -79,7 +79,7 @@ export default function Sidebar({ onFileClick, activeFile }: Props) {
         {status && (
           <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
             <span className="flex items-center gap-1"><Database size={11} />{status.total_chunks.toLocaleString()} chunks</span>
-            <span className="flex items-center gap-1"><FileText size={11} />{status.unique_files} files</span>
+            <span className="flex items-center gap-1"><FileText size={11} />{files.length} files</span>
           </div>
         )}
       </div>

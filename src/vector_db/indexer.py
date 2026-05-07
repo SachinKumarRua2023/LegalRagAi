@@ -101,10 +101,6 @@ def index_uploaded_files() -> dict[str, Any]:
 
 
 def get_index_status() -> dict[str, Any]:
+    """Fast stats-only check — does NOT list files (use /api/files for that)."""
     stats = collection_stats()
-    files = list_indexed_files()
-    return {
-        **stats,
-        "unique_files": len(files),
-        "files": files,
-    }
+    return {**stats, "unique_files": stats.get("total_chunks", 0)}

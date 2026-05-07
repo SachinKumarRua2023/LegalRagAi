@@ -33,7 +33,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # restrict in production
+    allow_origins=[
+        "https://legal-rag-ai.vercel.app",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,7 +47,16 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Lightweight startup — Pinecone data is pre-loaded, no download needed."""
+    """Preload embedding model in background so first query has no cold-start penalty."""
+    import threading
+    def _preload():
+        try:
+            from src.vector_db.embeddings import get_embedding_engine
+            get_embedding_engine()
+            print("[Startup] Embedding model preloaded.")
+        except Exception as e:
+            print(f"[Startup] Embedding preload failed: {e}")
+    threading.Thread(target=_preload, daemon=True).start()
     print("[Startup] LegalRagAI ready. Vector DB: Pinecone (pre-loaded).")
 
 
