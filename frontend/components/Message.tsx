@@ -45,8 +45,8 @@ export default function Message({ msg }: { msg: MessageType }) {
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-4 py-3">
           {msg.isLoading ? (
             <div className="flex items-center gap-2 text-gray-500">
-              <Loader2 size={16} className="animate-spin" />
-              <span className="text-sm">Researching legal cases…</span>
+              <Loader2 size={16} className="animate-spin flex-shrink-0" />
+              <span className="text-sm">{msg.content || "Researching legal cases…"}</span>
             </div>
           ) : (
             <div className="prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200">

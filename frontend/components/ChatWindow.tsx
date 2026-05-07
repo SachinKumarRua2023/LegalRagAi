@@ -56,37 +56,50 @@ export default function ChatWindow({ activeFile, onClearFile }: Props) {
     setInput("");
     setLoading(true);
 
-    try {
-      const res = await sendQuery(question, {
-        filter_file: activeFile || undefined,
-        filter_file_type: filterType || undefined,
-      });
+    const MAX_RETRIES = 3;
+    const RETRY_SEC = 20;
 
+    const updateLoading = (text: string) =>
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === loadingMsg.id
-            ? {
-                ...m,
-                content: res.answer,
-                sources: res.sources,
-                chunks_retrieved: res.chunks_retrieved,
-                isLoading: false,
-              }
-            : m
-        )
+        prev.map((m) => (m.id === loadingMsg.id ? { ...m, content: text } : m))
       );
-    } catch (e: unknown) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === loadingMsg.id
-            ? { ...m, content: `Error: ${errMsg}`, isLoading: false }
-            : m
-        )
-      );
-    } finally {
-      setLoading(false);
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        for (let t = RETRY_SEC; t > 0; t--) {
+          updateLoading(`Backend warming up — retrying in ${t}s…`);
+          await new Promise<void>((r) => setTimeout(r, 1000));
+        }
+        updateLoading(`Retrying… (attempt ${attempt}/${MAX_RETRIES})`);
+      }
+
+      try {
+        const res = await sendQuery(question, {
+          filter_file: activeFile || undefined,
+          filter_file_type: filterType || undefined,
+        });
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === loadingMsg.id
+              ? { ...m, content: res.answer, sources: res.sources, chunks_retrieved: res.chunks_retrieved, isLoading: false }
+              : m
+          )
+        );
+        break;
+      } catch (e: unknown) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        const isWarmup = errMsg.includes("starting up") || errMsg.includes("warming") || errMsg.includes("503");
+        if (isWarmup && attempt < MAX_RETRIES) continue;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === loadingMsg.id ? { ...m, content: `Error: ${errMsg}`, isLoading: false } : m
+          )
+        );
+        break;
+      }
     }
+
+    setLoading(false);
   }, [loading, activeFile, filterType]);
 
   return (
