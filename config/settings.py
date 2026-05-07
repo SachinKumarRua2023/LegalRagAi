@@ -17,7 +17,7 @@ COURTLISTENER_TOKEN = os.getenv("COURTLISTENER_TOKEN", "")
 # Options: "groq" | "gemini" | "claude" | "auto"
 # "auto" picks the first available key in order: groq → gemini → claude
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 

@@ -171,7 +171,106 @@ BACKEND_URL=https://legalragai.onrender.com
 
 ---
 
-## 6. How the RAG Query Works (Step-by-Step)
+## 6. How 100 MB of Documents Became 2 MB in Pinecone
+
+### Q: Was the full 100 MB uploaded to Pinecone?
+
+**No.** The raw PDF/DOCX files are never sent to Pinecone. Only the math (numbers) gets stored there.
+
+Here is exactly what happens step by step:
+
+**Step 1 — Parse (runs locally on your machine)**
+```
+ARS_lawsuit_doc.pdf (2.5 MB)
+    ↓ pdfplumber extracts text
+"The defendant American Restoration Solutions failed to..."  (plain text, ~0.05 MB)
+```
+The images, fonts, formatting, and layout in the PDF are all thrown away. Only the raw text survives. A 2.5 MB PDF typically becomes ~50 KB of text — a 50x size reduction.
+
+**Step 2 — Chunk (split into pieces)**
+```
+Full document text (~50 KB)
+    ↓ split every 1000 characters, 200 overlap
+Chunk 1: "The defendant American Restoration Solutions failed to..."
+Chunk 2: "...complete the repairs by the agreed deadline. The contract..."
+Chunk 3: "...signed on March 15, 2024. Exhibit A shows the original..."
+...
+~18 chunks per document
+```
+Each chunk is ~1000 characters = ~1 KB of plain text.
+
+**Step 3 — Embed (convert text → numbers)**
+```
+Chunk 1: "The defendant American Restoration Solutions failed to..."
+    ↓ Google gemini-embedding-001 API
+[0.0231, -0.1847, 0.0923, 0.2341, -0.0567, ..., 0.1102]
+   768 numbers (floats), each 4 bytes = 3,072 bytes per chunk
+```
+The text is gone. Pinecone only stores these 768 numbers + a tiny metadata dict (file name, path, page number). The actual sentence text is stored separately in Pinecone's metadata field — but only ~200 characters of it (the preview snippet), not the full chunk.
+
+**Step 4 — What Pinecone actually stores per vector**
+```json
+{
+  "id": "lawsuit_organized_deduped__ARS_001_complaint.pdf__chunk_0",
+  "values": [0.0231, -0.1847, 0.0923, ...],   ← 768 floats = 3 KB
+  "metadata": {
+    "text": "The defendant American Restoration...",  ← full chunk text ~1 KB
+    "source_file": "ARS_001_complaint.pdf",
+    "source_path": "data/lawsuit_organized_deduped",
+    "chunk_index": 0
+  }
+}
+```
+So each vector = ~4 KB total. 676 vectors × 4 KB = **~2.7 MB in Pinecone**.
+
+### Q: So the original documents are completely gone from the system?
+
+**Yes, for the cloud deployment.** The original PDFs only exist on your local machine in `data/lawsuit_organized_deduped/`. Render (the backend server) never has them. Pinecone only has the numbers.
+
+This is intentional and is a feature:
+- Pinecone free tier has a 2 GB vector storage limit — you could store 500,000+ chunks
+- No large file hosting needed — no S3, no file server
+- The text content of each chunk is preserved inside the metadata field, so answers still quote real sentences
+- If you delete the local PDFs, the RAG system still works — the knowledge is already baked into the vectors
+
+### Q: How does a vector (768 numbers) represent meaning?
+
+The 768 numbers are coordinates in a 768-dimensional mathematical space. Sentences with similar meaning end up close together in that space (high cosine similarity score), even if they use different words.
+
+```
+"The contractor failed to fix the roof"       → [0.02, -0.18, 0.09, ...]
+"ARS did not complete the repair work"        → [0.03, -0.17, 0.11, ...]
+                                                ↑ very close → similarity ~0.92
+
+"The cat sat on the mat"                      → [-0.31, 0.44, -0.22, ...]
+                                                ↑ very far  → similarity ~0.04
+```
+
+So when you ask *"Did ARS finish the repairs?"*, your question gets embedded into the same space, and Pinecone finds the 8 chunks whose vectors are closest — those are the most relevant passages.
+
+### Q: Full pipeline summary — 100 MB → 2 MB
+
+```
+48 lawsuit files (89 MB PDFs/DOCXs)
+    │
+    ▼ pdfplumber / python-docx extract text
+~4 MB plain text  (images/formatting stripped)
+    │
+    ▼ split into 1000-char chunks with 200-char overlap
+~676 text chunks  (~4 MB text total)
+    │
+    ▼ Google gemini-embedding-001 converts each chunk to 768 numbers
+~676 vectors      (768 floats × 4 bytes = 3 KB/vector)
+    │
+    ▼ stored in Pinecone with metadata (chunk text + file info)
+~2.7 MB in Pinecone  ← this is what "2 MB" refers to
+```
+
+The original files live only on your laptop. The cloud system only knows the math.
+
+---
+
+## 7. How the RAG Query Works (Step-by-Step)
 
 ```
 1. User types question in ChatWindow
@@ -198,7 +297,7 @@ BACKEND_URL=https://legalragai.onrender.com
 
 ---
 
-## 7. Deployment Architecture
+## 8. Deployment Architecture
 
 ```
 User Browser
@@ -235,7 +334,7 @@ Render Free Tier (legalragai.onrender.com)
 
 ---
 
-## 8. What Was Built & Fixed (Session History — 2026-05-07)
+## 9. What Was Built & Fixed (Session History — 2026-05-07)
 
 ### Session 1 — Initial Build & Deployment Fixes
 - Indexed 834 unique vectors into Pinecone (384-dim `legal-rag` index)
