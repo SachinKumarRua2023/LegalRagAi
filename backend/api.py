@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -206,6 +206,40 @@ def automation_query(req: AutomationQueryRequest, background_tasks: BackgroundTa
             log_to_odoo,
             username=req.from_email,
             question=req.question,
+            answer=result["answer"],
+            sources=result["sources"],
+            chunks_retrieved=result["chunks_retrieved"],
+            channel="email",
+        )
+        return {
+            "answer": result["answer"],
+            "sources_count": len(result["sources"]),
+            "top_source": result["sources"][0]["source_file"] if result["sources"] else "",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/automate/query/form")
+async def automation_query_form(
+    background_tasks: BackgroundTasks,
+    question: str = Form(...),
+    from_email: str = Form("automation@system"),
+    from_name: str = Form("Automation"),
+    secret: str = Form(""),
+):
+    """
+    Form-data version for Make.com — avoids JSON escaping issues with special characters.
+    Use Body content type: application/x-www-form-urlencoded in Make HTTP module.
+    """
+    if secret != AUTOMATION_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid automation secret.")
+    try:
+        result = rag_query(question=question, n_results=5)
+        background_tasks.add_task(
+            log_to_odoo,
+            username=from_email,
+            question=question,
             answer=result["answer"],
             sources=result["sources"],
             chunks_retrieved=result["chunks_retrieved"],
