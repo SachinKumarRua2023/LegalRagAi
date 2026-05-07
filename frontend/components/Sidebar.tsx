@@ -38,7 +38,7 @@ export default function Sidebar({ onFileClick, activeFile }: Props) {
     setLoading(true);
     try {
       const [f, s] = await Promise.all([listFiles(), getStatus()]);
-      setFiles(f);
+      setFiles(Array.isArray(f) ? f : []);
       setStatus(s);
     } catch {}
     setLoading(false);

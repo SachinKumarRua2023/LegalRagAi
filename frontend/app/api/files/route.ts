@@ -10,9 +10,9 @@ export async function GET() {
       return NextResponse.json([], { status: 503 });
     }
     const data = await res.json();
-    return NextResponse.json(data);
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    // Guard: backend error objects must not leak to the client as "data"
+    return NextResponse.json(Array.isArray(data) ? data : [], { status: res.status });
+  } catch {
+    return NextResponse.json([], { status: 503 });
   }
 }

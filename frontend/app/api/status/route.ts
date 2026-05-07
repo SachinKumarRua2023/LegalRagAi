@@ -10,7 +10,7 @@ export async function GET() {
       return NextResponse.json({ error: "Backend warming up, please retry in 30 seconds.", total_chunks: 0 }, { status: 503 });
     }
     const data = await res.json();
-    return NextResponse.json(data);
+    return NextResponse.json(data, { status: res.status });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

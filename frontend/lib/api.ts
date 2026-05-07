@@ -10,13 +10,13 @@ async function apiFetch(path: string, init?: RequestInit) {
     ...init,
   });
   if (!res.ok) {
+    let msg = res.statusText;
     try {
       const json = await res.json();
-      throw new Error(json.error || res.statusText);
-    } catch (e) {
-      if (e instanceof Error && e.message !== res.statusText) throw e;
-      throw new Error(await res.text().catch(() => res.statusText));
-    }
+      // Handle both {"error":"..."} (our routes) and {"detail":"..."} (FastAPI default)
+      msg = json.error || json.detail || json.message || res.statusText;
+    } catch {}
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -37,7 +37,8 @@ export async function sendQuery(
 }
 
 export async function listFiles(): Promise<IndexedFile[]> {
-  return apiFetch("/api/files");
+  const data = await apiFetch("/api/files");
+  return Array.isArray(data) ? data : [];
 }
 
 export async function getStatus(): Promise<IndexStatus> {
