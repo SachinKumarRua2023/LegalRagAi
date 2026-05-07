@@ -187,6 +187,39 @@ def ingest_folder(folder_path: str):
     return result
 
 
+# ── Make / n8n / Zapier automation endpoint (no JWT, uses shared secret) ──────
+
+AUTOMATION_SECRET = os.getenv("AUTOMATION_SECRET", "legalrag-automation-2026")
+
+@app.post("/api/automate/query")
+def automation_query(req: AutomationQueryRequest, background_tasks: BackgroundTasks):
+    """
+    Public endpoint for Make / n8n / Zapier.
+    Protected by AUTOMATION_SECRET env var instead of JWT.
+    Accepts a question + sender info, returns AI answer.
+    """
+    if req.secret != AUTOMATION_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid automation secret.")
+    try:
+        result = rag_query(question=req.question, n_results=5)
+        background_tasks.add_task(
+            log_to_odoo,
+            username=req.from_email,
+            question=req.question,
+            answer=result["answer"],
+            sources=result["sources"],
+            chunks_retrieved=result["chunks_retrieved"],
+            channel="email",
+        )
+        return {
+            "answer": result["answer"],
+            "sources_count": len(result["sources"]),
+            "top_source": result["sources"][0]["source_file"] if result["sources"] else "",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── VAPI Voice AI webhook ─────────────────────────────────────────────────────
 
 @app.post("/api/vapi/webhook")
@@ -239,6 +272,13 @@ async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 # ── Support ticket endpoint ───────────────────────────────────────────────────
+
+class AutomationQueryRequest(BaseModel):
+    question: str
+    from_email: str = "automation@system"
+    from_name: str = "Automation"
+    secret: str = ""  # simple shared secret to prevent abuse
+
 
 class SupportTicketRequest(BaseModel):
     name: str
