@@ -10,8 +10,13 @@ async function apiFetch(path: string, init?: RequestInit) {
     ...init,
   });
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(err || res.statusText);
+    try {
+      const json = await res.json();
+      throw new Error(json.error || res.statusText);
+    } catch (e) {
+      if (e instanceof Error && e.message !== res.statusText) throw e;
+      throw new Error(await res.text().catch(() => res.statusText));
+    }
   }
   return res.json();
 }
