@@ -75,12 +75,12 @@ def index_directory(
         results.append(result)
         if result["status"] == "ok":
             ok += 1
-            console.print(f"  [green]✓[/green] {result['file']} → {result['chunks_added']} chunks")
+            console.print(f"  [green]OK[/green] {result['file']} -> {result['chunks_added']} chunks")
         elif result["status"] == "skipped":
             skip += 1
         else:
             err += 1
-            console.print(f"  [red]✗[/red] {result['file']}: {result.get('error', result.get('reason', ''))}")
+            console.print(f"  [red]ERR[/red] {result['file']}: {result.get('error', result.get('reason', ''))}")
 
     stats = collection_stats()
     return {
