@@ -28,6 +28,8 @@ services:
         value: ./data/processed
       - key: DATA_UPLOADS_PATH
         value: ./data/uploads
+      - key: SUPPORT_EMAIL
+        value: seekhowithrua@gmail.com
       # Set these in Render dashboard → Environment (secret)
       - key: PINECONE_API_KEY
         sync: false
@@ -36,4 +38,20 @@ services:
       - key: GOOGLE_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ODOO_URL
+        sync: false
+      - key: ODOO_DB
+        sync: false
+      - key: ODOO_USER
+        sync: false
+      - key: ODOO_PASS
+        sync: false
+      - key: VAPI_API_KEY
+        sync: false
+      - key: VAPI_ASSISTANT_ID
+        sync: false
+      - key: VAPI_PHONE_NUMBER_ID
+        sync: false
+      - key: HUMAN_TRANSFER_NUMBER
         sync: false

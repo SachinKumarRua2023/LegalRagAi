@@ -61,6 +61,21 @@ SIMILARITY_THRESHOLD = 0.15  # Lower threshold to capture more content
 MAX_DOWNLOAD_SIZE_GB = float(os.getenv("MAX_DOWNLOAD_SIZE_GB", "3"))
 DOWNLOAD_BATCH_SIZE = int(os.getenv("DOWNLOAD_BATCH_SIZE", "100"))
 
+# ── Odoo CRM ─────────────────────────────────────────────────
+ODOO_URL = os.getenv("ODOO_URL", "")
+ODOO_DB = os.getenv("ODOO_DB", "")
+ODOO_USER = os.getenv("ODOO_USER", "")
+ODOO_PASS = os.getenv("ODOO_PASS", "")
+
+# ── VAPI Voice AI ─────────────────────────────────────────────
+VAPI_API_KEY = os.getenv("VAPI_API_KEY", "")
+VAPI_ASSISTANT_ID = os.getenv("VAPI_ASSISTANT_ID", "")
+VAPI_PHONE_NUMBER_ID = os.getenv("VAPI_PHONE_NUMBER_ID", "")
+HUMAN_TRANSFER_NUMBER = os.getenv("HUMAN_TRANSFER_NUMBER", "")
+
+# ── Support Contact ───────────────────────────────────────────
+SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "seekhowithrua@gmail.com")
+
 # ── Supported File Types ─────────────────────────────────────
 SUPPORTED_EXTENSIONS = {
     ".pdf", ".docx", ".doc", ".pptx", ".ppt",

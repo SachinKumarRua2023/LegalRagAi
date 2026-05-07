@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -25,6 +25,8 @@ from src.vector_db.indexer import index_file, index_directory, get_index_status
 from src.vector_db.vector_client import list_indexed_files
 from config.settings import DATA_UPLOADS_PATH, SUPPORTED_EXTENSIONS
 from backend.auth import authenticate, get_current_user
+from src.integrations.odoo_client import log_to_odoo
+from config.settings import VAPI_API_KEY, HUMAN_TRANSFER_NUMBER, SUPPORT_EMAIL
 
 app = FastAPI(
     title="CompleteRagAI — Legal Research API",
@@ -92,7 +94,11 @@ def login(req: LoginRequest):
 
 
 @app.post("/api/query", response_model=QueryResponse)
-def query_endpoint(req: QueryRequest, user: dict = Depends(get_current_user)):
+def query_endpoint(
+    req: QueryRequest,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     """Run a RAG query against the vector database."""
     try:
         result = rag_query(
@@ -101,6 +107,16 @@ def query_endpoint(req: QueryRequest, user: dict = Depends(get_current_user)):
             filter_file=req.filter_file,
             filter_folder=req.filter_folder,
             filter_file_type=req.filter_file_type,
+        )
+        # Log to Odoo CRM in background (never slows the response)
+        background_tasks.add_task(
+            log_to_odoo,
+            username=user["username"],
+            question=req.question,
+            answer=result["answer"],
+            sources=result["sources"],
+            chunks_retrieved=result["chunks_retrieved"],
+            channel="web",
         )
         return result
     except Exception as e:
@@ -169,6 +185,92 @@ def ingest_folder(folder_path: str):
         raise HTTPException(status_code=404, detail=f"Folder not found: {folder_path}")
     result = index_directory(p)
     return result
+
+
+# ── VAPI Voice AI webhook ─────────────────────────────────────────────────────
+
+@app.post("/api/vapi/webhook")
+async def vapi_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    VAPI calls this when a user asks a question over the phone.
+    VAPI sends the transcribed question → we run RAG → return answer as text → VAPI speaks it.
+    """
+    try:
+        body = await request.json()
+        message = body.get("message", {})
+        msg_type = message.get("type", "")
+
+        # Function/tool call from VAPI assistant
+        if msg_type == "function-call":
+            func = message.get("functionCall", {})
+            params = func.get("parameters", {})
+            if isinstance(params, str):
+                import json as _json
+                params = _json.loads(params)
+            question = params.get("question", params.get("query", ""))
+            if not question:
+                return {"result": "I didn't catch your question. Could you please repeat it?"}
+
+            result = rag_query(question=question, n_results=5)
+            # Keep answer concise for voice (strip markdown)
+            answer = result["answer"].replace("**", "").replace("##", "").replace("#", "")
+            answer = answer[:1500]  # Voice responses should be shorter
+
+            background_tasks.add_task(
+                log_to_odoo,
+                username="voice_caller",
+                question=question,
+                answer=answer,
+                sources=result["sources"],
+                chunks_retrieved=result["chunks_retrieved"],
+                channel="voice",
+            )
+            return {"result": answer}
+
+        # Call ended — log summary
+        if msg_type == "end-of-call-report":
+            print(f"[VAPI] Call ended: {body.get('endedReason', 'unknown')}")
+            return {"status": "logged"}
+
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"[VAPI] Webhook error: {e}")
+        return {"result": "I'm having technical difficulties. Please try again or call our support team."}
+
+
+# ── Support ticket endpoint ───────────────────────────────────────────────────
+
+class SupportTicketRequest(BaseModel):
+    name: str
+    email: str
+    subject: str
+    description: str
+
+
+@app.post("/api/support/ticket")
+def create_support_ticket(req: SupportTicketRequest):
+    """Create a support ticket in Odoo CRM."""
+    try:
+        from src.integrations.odoo_client import get_odoo_client
+        client = get_odoo_client()
+        if client:
+            ticket_id = client.create_support_ticket(
+                req.name, req.email, req.subject, req.description
+            )
+            return {"status": "created", "ticket_id": ticket_id}
+        return {"status": "queued", "message": f"Report sent to {SUPPORT_EMAIL}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/support/info")
+def support_info():
+    """Returns support contact details for the frontend."""
+    return {
+        "email": SUPPORT_EMAIL,
+        "phone": HUMAN_TRANSFER_NUMBER,
+        "vapi_enabled": bool(VAPI_API_KEY),
+    }
 
 
 if __name__ == "__main__":
