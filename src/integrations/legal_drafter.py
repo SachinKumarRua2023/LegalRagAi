@@ -190,8 +190,10 @@ Return ONLY the JSON with "subject" and "body" keys as instructed.
         raw = raw.strip()
 
         result = _json.loads(raw)
-        subject = result.get("subject", f"Legal Response: {question[:60]}")
-        body = result.get("body", f"<p>{rag_answer}</p>")
+        subject = result.get("subject") or f"Legal Response: {question[:60]}"
+        body = result.get("body") or ""
+        if not body.strip():
+            body = _fallback_html(question, rag_answer)["body"]
 
         print(f"[LegalDrafter] Drafted: subject='{subject[:60]}' body={len(body)} chars")
         return {"subject": subject, "body": body}
