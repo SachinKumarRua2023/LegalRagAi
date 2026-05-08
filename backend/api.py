@@ -485,46 +485,72 @@ async def legal_draft_form(
 
 @app.post("/api/automate/upload")
 async def automation_upload(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     secret: str = Form(""),
 ):
     """
     Secret-protected file upload for Make.com automation.
     Accepts email attachment → parses text → indexes to Pinecone → returns extracted text.
-    Make.com: use multipart/form-data, pass file + secret fields.
+
+    Make.com multipart/form-data setup:
+      Field 1 — type: File, Key: file, Data: {{toBinary(3.data; "base64url")}}, Filename: {{2.Filename}}
+      Field 2 — type: Text, Key: secret, Value: legalrag-automation-2026
+
+    NOTE: Use 3.data (not 3.Body.data) — Gmail native module auto-parses JSON so the
+    attachment data is directly at 3.data, not nested under 3.Body.
     """
     if secret != AUTOMATION_SECRET:
         raise HTTPException(status_code=403, detail="Invalid automation secret.")
 
-    ext = Path(file.filename).suffix.lower()
+    # If Make.com's variable resolved to empty, file arrives as None or 0-byte
+    if file is None:
+        print("[AutomateUpload] SKIP — no file received (Make.com variable resolved to empty). "
+              "Check Module 4: use 3.data not 3.Body.data")
+        return {"status": "skipped", "reason": "no file", "extracted_text": "", "chunks_indexed": 0}
+
+    # Read content first to check if it's actually empty
+    content = await file.read()
+    if not content:
+        print(f"[AutomateUpload] SKIP — file field received but content is 0 bytes. "
+              f"filename={file.filename!r}. Check Module 4: use {{{{toBinary(3.data; 'base64url')}}}} not 3.Body.data")
+        return {"status": "skipped", "reason": "empty file content", "extracted_text": "", "chunks_indexed": 0}
+
+    ext = Path(file.filename or "").suffix.lower()
+    print(f"[AutomateUpload] RECV filename={file.filename!r} size={len(content)} bytes ext={ext}")
+
     if ext not in SUPPORTED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type: {ext}. Supported: {sorted(SUPPORTED_EXTENSIONS)}",
-        )
+        return {
+            "status": "skipped",
+            "reason": f"unsupported file type {ext}",
+            "extracted_text": "",
+            "chunks_indexed": 0,
+        }
 
     # Save to temp file
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-        shutil.copyfileobj(file.file, tmp)
+        tmp.write(content)
         tmp_path = Path(tmp.name)
 
-    print(f"[AutomateUpload] RECV filename={file.filename!r} size={tmp_path.stat().st_size if tmp_path.exists() else 0} bytes")
-
     try:
-        # Index to Pinecone (parse + chunk + embed + store)
-        result = index_file(tmp_path, extra_metadata={"source": "email_attachment", "filename": file.filename})
-
         # Extract text for immediate use in the reply
         from src.data_ingestion.parsers.document_router import parse_document
         extracted_text = parse_document(tmp_path)
         preview = extracted_text[:3000] if extracted_text else ""
 
-        print(f"[AutomateUpload] Indexed {result.get('chunks_added', 0)} chunks | extracted {len(preview)} chars from {file.filename!r}")
+        # Index to Pinecone (parse + chunk + embed + store)
+        chunks_indexed = 0
+        try:
+            result = index_file(tmp_path, extra_metadata={"source": "email_attachment", "filename": file.filename})
+            chunks_indexed = result.get("chunks_added", 0)
+        except Exception as idx_e:
+            print(f"[AutomateUpload] Pinecone indexing failed (non-fatal): {idx_e}")
+
+        print(f"[AutomateUpload] Indexed {chunks_indexed} chunks | extracted {len(preview)} chars from {file.filename!r}")
         return {
             "status": "indexed",
             "filename": file.filename,
             "extracted_text": preview,
-            "chunks_indexed": result.get("chunks_added", 0),
+            "chunks_indexed": chunks_indexed,
         }
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -542,11 +568,15 @@ async def upload_attachment_base64(req: AttachmentBase64Request):
     Accept Gmail attachment as base64url JSON (from Make.com Module 4).
     Decodes → parses text → indexes to Pinecone → returns extracted_text.
 
-    Make.com Module 4 setup:
+    Make.com Module 4 setup (JSON Raw body):
       Method: POST
       URL: https://legalragai.onrender.com/api/automate/upload/base64
       Body type: Raw  |  Content type: application/json
-      Body: {"data":"{{3.data.data}}","filename":"{{2.name}}","secret":"legalrag-automation-2026"}
+      Body: {"data":"{{3.data}}","filename":"{{2.Filename}}","secret":"legalrag-automation-2026"}
+
+      IMPORTANT: Use 3.data (NOT 3.Body.data and NOT 3.data.data).
+      Gmail native "Make an API call" auto-parses JSON — the attachment data
+      field is directly accessible as 3.data.
 
     Module 6 attachment_text field: {{4.extracted_text}}
     """
