@@ -63,6 +63,43 @@ STRICT RULES:
 """
 
 
+def _markdown_to_html(text: str) -> str:
+    """Convert basic markdown to HTML for fallback responses."""
+    import re
+    html = text
+    html = re.sub(r'^#### (.+)$', r'<h4 style="color:#0a1628;">\1</h4>', html, flags=re.MULTILINE)
+    html = re.sub(r'^### (.+)$', r'<h3 style="color:#0a1628;border-bottom:1px solid #c9a84c;padding-bottom:4px;">\1</h3>', html, flags=re.MULTILINE)
+    html = re.sub(r'^## (.+)$', r'<h2 style="color:#0a1628;">\1</h2>', html, flags=re.MULTILINE)
+    html = re.sub(r'^# (.+)$', r'<h1 style="color:#0a1628;">\1</h1>', html, flags=re.MULTILINE)
+    html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
+    html = re.sub(r'\*(.+?)\*', r'<em>\1</em>', html)
+    html = re.sub(r'^\- (.+)$', r'<li style="margin-bottom:6px;">\1</li>', html, flags=re.MULTILINE)
+    html = re.sub(r'(<li.*</li>\n?)+', r'<ul style="padding-left:20px;">\g<0></ul>', html)
+    html = re.sub(r'\n\n+', '</p><p style="margin-bottom:14px;">', html)
+    html = html.replace('\n', '<br>')
+    return f'<p style="margin-bottom:14px;">{html}</p>'
+
+
+def _fallback_html(question: str, rag_answer: str) -> dict:
+    """Clean HTML fallback when Claude is unavailable."""
+    today = date.today().strftime("%B %d, %Y")
+    body_content = _markdown_to_html(rag_answer)
+    body = f"""
+<div style="font-family:Georgia,serif;max-width:700px;color:#1a1a1a;line-height:1.8;">
+  <p style="color:#555;margin-bottom:20px;">{today}</p>
+  <p style="margin-bottom:24px;">Dear Client,</p>
+  <p style="margin-bottom:16px;">Thank you for your inquiry. Please find our response below based on the available case documentation.</p>
+  {body_content}
+  <p style="margin-bottom:4px;">Respectfully submitted,</p>
+  <p style="margin-bottom:4px;"><strong>Legal AI Research Assistant</strong></p>
+  <p style="color:#555;">On behalf of the Client</p>
+</div>"""
+    return {
+        "subject": f"Legal Response: {question[:70]}",
+        "body": body,
+    }
+
+
 def draft_legal_email(
     question: str,
     rag_answer: str,
@@ -74,14 +111,11 @@ def draft_legal_email(
     """
     Draft a professional legal response using Claude.
     Returns dict with 'subject' and 'body' (HTML).
-    Falls back to plain text RAG answer if Claude unavailable.
+    Falls back to clean HTML RAG answer if Claude unavailable.
     """
     if not ANTHROPIC_API_KEY:
-        print("[LegalDrafter] ANTHROPIC_API_KEY not set — returning RAG answer.")
-        return {
-            "subject": f"Legal Response: {question[:60]}",
-            "body": f"<p>{rag_answer}</p>",
-        }
+        print("[LegalDrafter] ANTHROPIC_API_KEY not set — returning RAG answer as HTML.")
+        return _fallback_html(question, rag_answer)
 
     try:
         import anthropic
@@ -164,7 +198,4 @@ Return ONLY the JSON with "subject" and "body" keys as instructed.
 
     except Exception as e:
         print(f"[LegalDrafter] Claude drafting failed (non-fatal): {e}")
-        return {
-            "subject": f"Legal Response: {question[:60]}",
-            "body": f"<p>{rag_answer}</p>",
-        }
+        return _fallback_html(question, rag_answer)
