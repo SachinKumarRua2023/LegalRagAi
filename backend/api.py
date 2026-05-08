@@ -508,6 +508,8 @@ async def automation_upload(
         shutil.copyfileobj(file.file, tmp)
         tmp_path = Path(tmp.name)
 
+    print(f"[AutomateUpload] RECV filename={file.filename!r} size={tmp_path.stat().st_size if tmp_path.exists() else 0} bytes")
+
     try:
         # Index to Pinecone (parse + chunk + embed + store)
         result = index_file(tmp_path, extra_metadata={"source": "email_attachment", "filename": file.filename})
@@ -517,6 +519,7 @@ async def automation_upload(
         extracted_text = parse_document(tmp_path)
         preview = extracted_text[:3000] if extracted_text else ""
 
+        print(f"[AutomateUpload] Indexed {result.get('chunks_added', 0)} chunks | extracted {len(preview)} chars from {file.filename!r}")
         return {
             "status": "indexed",
             "filename": file.filename,
