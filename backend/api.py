@@ -547,10 +547,14 @@ async def upload_attachment_base64(req: AttachmentBase64Request):
 
     Module 6 attachment_text field: {{4.extracted_text}}
     """
+    # Log BEFORE any validation so we always see what Make.com sent
+    print(f"[UploadBase64] RECV data_len={len(req.data)} filename={req.filename!r} secret_ok={req.secret == AUTOMATION_SECRET}")
+
     if req.secret != AUTOMATION_SECRET:
         raise HTTPException(status_code=403, detail="Invalid automation secret.")
 
     if not req.data.strip():
+        print(f"[UploadBase64] SKIP — data field is empty (Make.com variable resolved to empty string)")
         return {"status": "skipped", "reason": "no data", "extracted_text": "", "chunks_indexed": 0}
 
     ext = Path(req.filename).suffix.lower() if req.filename else ""
