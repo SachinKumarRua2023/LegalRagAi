@@ -383,13 +383,44 @@ async def legal_draft_form(
     from_name: str = Form("Client"),
     secret: str = Form(""),
     attachment_text: str = Form(""),
+    attachment_base64: str = Form(""),
+    attachment_filename: str = Form(""),
 ):
     """
     Form-data version for Make.com.
     Returns: professional_reply (HTML body) + email_subject (professional subject line).
+    Accepts attachment as base64 string — no multipart upload needed from Make.com.
     """
     if secret != AUTOMATION_SECRET:
         raise HTTPException(status_code=403, detail="Invalid automation secret.")
+
+    # Decode base64 attachment and extract text if no attachment_text already provided
+    if attachment_base64.strip() and attachment_filename.strip() and not attachment_text.strip():
+        try:
+            import base64 as _base64
+            b64 = attachment_base64.strip().replace('-', '+').replace('_', '/')
+            b64 += '=' * (4 - len(b64) % 4)
+            file_bytes = _base64.b64decode(b64)
+            ext = Path(attachment_filename).suffix.lower()
+            if ext in SUPPORTED_EXTENSIONS:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                    tmp.write(file_bytes)
+                    tmp_path = Path(tmp.name)
+                try:
+                    from src.data_ingestion.parsers.document_router import parse_document
+                    extracted = parse_document(tmp_path)
+                    if extracted and extracted.strip():
+                        attachment_text = extracted[:3000]
+                        print(f"[AutomateLegal] Extracted {len(attachment_text)} chars from attachment: {attachment_filename}")
+                    try:
+                        index_file(tmp_path, extra_metadata={"source": "email_attachment", "filename": attachment_filename})
+                        print(f"[AutomateLegal] Indexed attachment to Pinecone: {attachment_filename}")
+                    except Exception as idx_e:
+                        print(f"[AutomateLegal] Pinecone indexing failed (non-fatal): {idx_e}")
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"[AutomateLegal] Base64 attachment processing failed (non-fatal): {e}")
 
     # Each step is individually resilient — always returns HTTP 200 with a reply
     try:
