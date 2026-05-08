@@ -369,6 +369,7 @@ async def legal_draft_endpoint(req: LegalDraftRequest, background_tasks: Backgro
             "rag_answer": rag_result["answer"],
             "web_sources_found": len(web_results),
             "chunks_retrieved": rag_result["chunks_retrieved"],
+            "source_files": [s["source_file"] for s in rag_result["sources"][:3]],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -389,12 +390,22 @@ async def legal_draft_form(
     """
     if secret != AUTOMATION_SECRET:
         raise HTTPException(status_code=403, detail="Invalid automation secret.")
+
+    # Each step is individually resilient — always returns HTTP 200 with a reply
     try:
         rag_result = rag_query(question=question, n_results=8)
+    except Exception as e:
+        print(f"[AutomateLegal] RAG query failed (non-fatal): {e}")
+        rag_result = {"answer": "Unable to retrieve case documents at this time.", "sources": [], "chunks_retrieved": 0}
 
+    try:
         from src.integrations.web_search import search_legal_evidence
         web_results = search_legal_evidence(question, max_results=5)
+    except Exception as e:
+        print(f"[AutomateLegal] Web search failed (non-fatal): {e}")
+        web_results = []
 
+    try:
         from src.integrations.legal_drafter import draft_legal_email
         drafted = draft_legal_email(
             question=question,
@@ -404,7 +415,16 @@ async def legal_draft_form(
             attachment_text=attachment_text,
             from_name=from_name,
         )
+    except Exception as e:
+        print(f"[AutomateLegal] Drafting failed (non-fatal): {e}")
+        from datetime import date
+        today = date.today().strftime("%B %d, %Y")
+        drafted = {
+            "subject": f"Legal Response: {question[:70]}",
+            "body": f'<div style="font-family:Georgia,serif;max-width:700px;color:#1a1a1a;line-height:1.8;"><p style="color:#555;">{today}</p><p>Dear {from_name},</p><p>Thank you for your inquiry. Our team has received your message and will respond shortly with a detailed legal analysis.</p><p>Respectfully submitted,<br><strong>Legal AI Research Assistant</strong></p></div>',
+        }
 
+    try:
         background_tasks.add_task(
             log_to_odoo,
             username=from_email,
@@ -414,15 +434,16 @@ async def legal_draft_form(
             chunks_retrieved=rag_result["chunks_retrieved"],
             channel="email_legal",
         )
+    except Exception:
+        pass
 
-        return {
-            "professional_reply": drafted["body"],
-            "email_subject": drafted["subject"],
-            "web_sources_found": len(web_results),
-            "chunks_retrieved": rag_result["chunks_retrieved"],
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "professional_reply": drafted["body"],
+        "email_subject": drafted["subject"],
+        "web_sources_found": len(web_results),
+        "chunks_retrieved": rag_result["chunks_retrieved"],
+        "source_files": [s["source_file"] for s in rag_result["sources"][:3]],
+    }
 
 
 # ── Automation file upload → auto-index to Pinecone ──────────────────────────
