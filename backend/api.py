@@ -394,6 +394,10 @@ async def legal_draft_form(
     if secret != AUTOMATION_SECRET:
         raise HTTPException(status_code=403, detail="Invalid automation secret.")
 
+    # Debug: log what arrived so we can diagnose Make.com field issues
+    print(f"[AutomateLegal] question={len(question)}chars attachment_base64={len(attachment_base64)}chars "
+          f"attachment_filename={attachment_filename!r} attachment_text={len(attachment_text)}chars")
+
     # Decode base64 attachment and extract text if no attachment_text already provided
     if attachment_base64.strip() and attachment_filename.strip() and not attachment_text.strip():
         try:
@@ -518,6 +522,80 @@ async def automation_upload(
             "filename": file.filename,
             "extracted_text": preview,
             "chunks_indexed": result.get("chunks_added", 0),
+        }
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+class AttachmentBase64Request(BaseModel):
+    data: str          # base64url string from Gmail Attachments.get API
+    filename: str      # original filename, e.g. "document.pdf"
+    secret: str = ""
+
+
+@app.post("/api/automate/upload/base64")
+async def upload_attachment_base64(req: AttachmentBase64Request):
+    """
+    Accept Gmail attachment as base64url JSON (from Make.com Module 4).
+    Decodes → parses text → indexes to Pinecone → returns extracted_text.
+
+    Make.com Module 4 setup:
+      Method: POST
+      URL: https://legalragai.onrender.com/api/automate/upload/base64
+      Body type: Raw  |  Content type: application/json
+      Body: {"data":"{{3.data.data}}","filename":"{{2.name}}","secret":"legalrag-automation-2026"}
+
+    Module 6 attachment_text field: {{4.extracted_text}}
+    """
+    if req.secret != AUTOMATION_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid automation secret.")
+
+    if not req.data.strip():
+        return {"status": "skipped", "reason": "no data", "extracted_text": "", "chunks_indexed": 0}
+
+    ext = Path(req.filename).suffix.lower() if req.filename else ""
+    print(f"[UploadBase64] filename={req.filename!r} ext={ext} data_len={len(req.data)}")
+
+    if ext not in SUPPORTED_EXTENSIONS:
+        return {
+            "status": "unsupported",
+            "reason": f"file type {ext} not supported",
+            "extracted_text": "",
+            "chunks_indexed": 0,
+        }
+
+    try:
+        import base64 as _base64
+        b64 = req.data.strip().replace('-', '+').replace('_', '/')
+        b64 += '=' * (4 - len(b64) % 4)
+        file_bytes = _base64.b64decode(b64)
+    except Exception as e:
+        print(f"[UploadBase64] base64 decode failed: {e}")
+        return {"status": "error", "reason": f"base64 decode failed: {e}", "extracted_text": "", "chunks_indexed": 0}
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = Path(tmp.name)
+
+    try:
+        from src.data_ingestion.parsers.document_router import parse_document
+        extracted = parse_document(tmp_path) or ""
+        extracted_text = extracted[:3000]
+        print(f"[UploadBase64] Extracted {len(extracted_text)} chars from {req.filename}")
+
+        chunks_indexed = 0
+        try:
+            result = index_file(tmp_path, extra_metadata={"source": "email_attachment", "filename": req.filename})
+            chunks_indexed = result.get("chunks_added", 0)
+            print(f"[UploadBase64] Indexed {chunks_indexed} chunks to Pinecone: {req.filename}")
+        except Exception as idx_e:
+            print(f"[UploadBase64] Pinecone indexing failed (non-fatal): {idx_e}")
+
+        return {
+            "status": "indexed",
+            "filename": req.filename,
+            "extracted_text": extracted_text,
+            "chunks_indexed": chunks_indexed,
         }
     finally:
         tmp_path.unlink(missing_ok=True)
